@@ -53,10 +53,10 @@ button,input,select,textarea { font:inherit } button { cursor:pointer }
 }
 
 /* Official firm brand */
-.sidebar-logo-wrap { width:100%; min-height:84px; margin:0 0 28px; display:flex; align-items:center; overflow:hidden; border-radius:9px; background:#000 }
+.sidebar-logo-wrap { width:100%; min-height:84px; margin:0 0 28px; padding:10px; display:flex; align-items:center; overflow:hidden; border-radius:9px; background:#fff }
 .sidebar-logo-wrap img { display:block; width:100%; height:auto }
-.auth-brand-logo { display:block; width:calc(100% + 68px); height:auto; margin:-34px -34px 28px; border-radius:18px 18px 0 0; background:#000 }
-.preview-logo { display:block; width:auto; max-width:100%; height:auto; max-height:86px; object-fit:contain; object-position:left center; background:#000 }
+.auth-brand-logo { display:block; width:calc(100% + 68px); height:auto; margin:-34px -34px 28px; padding:18px 24px; border-radius:18px 18px 0 0; background:#fff }
+.preview-logo { display:block; width:auto; max-width:100%; height:auto; max-height:86px; object-fit:contain; object-position:left center; background:#fff }
 
 @media (max-width:410px) {
   .auth-brand-logo { width:calc(100% + 48px); margin:-24px -24px 24px }

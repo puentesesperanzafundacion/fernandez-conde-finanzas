@@ -19,7 +19,7 @@ type Tab = "inicio" | "documentos" | "clientes" | "movimientos" | "informes";
 type DeleteTarget = { type: "client" | "document" | "movement"; id: number; label: string };
 
 const money = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 2 });
-const brandLogoSrc = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/logo-fernandez-conde.jpeg`;
+const brandLogoSrc = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/logo-fernandez-conde.png`;
 const servicePresets = ["Consulta y estrategia jurídica", "Juicio de amparo migratorio", "Regularización migratoria", "Asesoría corporativa mensual", "Elaboración y revisión de contrato"];
 
 async function imageAsDataUrl(src: string) {
@@ -145,9 +145,9 @@ export default function HomePage() {
   };
   const generatePdf = async (doc: Document, share = false) => {
     const pdf = new jsPDF({ unit: "mm", format: "letter" }); const blue: [number, number, number] = [15, 48, 87]; const gold: [number, number, number] = [184, 139, 55];
-    pdf.setFillColor(0,0,0); pdf.rect(0, 0, 216, 42, "F");
-    try { pdf.addImage(await imageAsDataUrl(brandLogoSrc), "JPEG", 8, 2, 125, 41) } catch { pdf.setTextColor(255,255,255); pdf.setFont("helvetica", "bold"); pdf.setFontSize(19); pdf.text("FERNÁNDEZ CONDE", 18, 19) }
-    pdf.setTextColor(...gold); pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); pdf.text(doc.kind.toUpperCase(), 198, 18, { align: "right" }); pdf.setTextColor(220,224,229); pdf.setFontSize(9); pdf.text(doc.folio, 198, 27, { align: "right" });
+    pdf.setFillColor(255,255,255); pdf.rect(0, 0, 216, 45, "F");
+    try { pdf.addImage(await imageAsDataUrl(brandLogoSrc), "PNG", 8, 3, 125, 42) } catch { pdf.setTextColor(...blue); pdf.setFont("helvetica", "bold"); pdf.setFontSize(19); pdf.text("FERNÁNDEZ CONDE", 18, 19) }
+    pdf.setTextColor(...blue); pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); pdf.text(doc.kind.toUpperCase(), 198, 18, { align: "right" }); pdf.setTextColor(95,102,110); pdf.setFontSize(9); pdf.text(doc.folio, 198, 27, { align: "right" }); pdf.setDrawColor(...gold); pdf.setLineWidth(.6); pdf.line(18,45,198,45);
     pdf.setTextColor(40,47,55); pdf.setFont("helvetica", "normal"); pdf.text("EMITIDO PARA", 18, 56); pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); pdf.text(doc.client, 18, 65); pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.text(`Fecha: ${doc.date}`, 198, 56, { align: "right" }); pdf.text("Moneda: MXN", 198, 63, { align: "right" });
     pdf.setDrawColor(220,224,229); pdf.line(18,78,198,78); pdf.setFont("helvetica", "bold"); pdf.setFillColor(245,247,250); pdf.rect(18,82,180,12,"F"); pdf.text("CONCEPTO",23,90); pdf.text("IMPORTE",191,90,{align:"right"}); pdf.setFont("helvetica","normal"); pdf.text(doc.concept,23,106); pdf.text(money.format(doc.amount),191,106,{align:"right"}); pdf.line(18,116,198,116); pdf.setFont("helvetica","bold"); pdf.setFontSize(12); pdf.text("TOTAL",145,130); pdf.setTextColor(...blue); pdf.setFontSize(16); pdf.text(money.format(doc.amount),198,130,{align:"right"});
     pdf.setTextColor(75,82,90); pdf.setFont("helvetica","normal"); pdf.setFontSize(8.5); pdf.text("El presente documento no constituye un CFDI.",18,154); pdf.text("Gracias por confiar en Fernández Conde, S.C.",18,161); pdf.setDrawColor(...gold); pdf.setLineWidth(1); pdf.line(18,244,198,244); pdf.setTextColor(95,102,110); pdf.text("contacto@fernandezconde.mx  ·  Ciudad de México",108,253,{align:"center"});
