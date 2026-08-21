@@ -28,7 +28,7 @@ type DocumentMarginRow = { document_id: number; client_id: number; folio: string
 type ClientMarginRow = { client_id: number; client_name: string; income_cents: number; expense_cents: number; margin_cents: number; margin_percent: number | null };
 type ProfitSettingsRow = { fund_bps: number; oscar_bps: number; dan_bps: number; updated_at: string };
 type ProfitDistributionRow = { id: number; period_start: string; period_end: string; income_cents: number; expense_cents: number; net_profit_cents: number; fund_cents: number; oscar_cents: number; dan_cents: number; fund_bps: number; oscar_bps: number; dan_bps: number; created_at: string };
-type FundBalanceRow = { balance_cents: number };
+type FundBalanceRow = { balance_cents: number; allocated_cents: number; spent_cents: number };
 type AuditRow = { id: number; entity: RecordEntity; record_id: number; action: AuditEntry["action"]; actor_id?: string | null; occurred_at: string };
 type TimestampRow = { updated_at: string };
 type CreatedDocumentRow = TimestampRow & { id: number; folio: string; issued_at: string };
@@ -56,7 +56,7 @@ export async function loadFinanceData() {
     dbRequest<ClientMarginRow[]>("finance_client_margins_v6?select=*&order=client_name"),
     dbRequest<ProfitSettingsRow[]>("profit_distribution_settings_v6?select=*&limit=1"),
     dbRequest<ProfitDistributionRow[]>("profit_distributions_v6?select=*&order=period_start.desc,created_at.desc"),
-    dbRequest<FundBalanceRow[]>("finance_fund_balance_v6?select=balance_cents"),
+    dbRequest<FundBalanceRow[]>("finance_fund_balance_v6?select=balance_cents,allocated_cents,spent_cents"),
   ]);
   const movements = movementRows.map(mapMovement);
   const paidByDocument = new Map<number, number>();
@@ -71,7 +71,9 @@ export async function loadFinanceData() {
   const profitSettings: ProfitSettings = { fundPercent: settingsRow.fund_bps / 100, oscarPercent: settingsRow.oscar_bps / 100, danPercent: settingsRow.dan_bps / 100, updatedAt: settingsRow.updated_at };
   const distributions: ProfitDistribution[] = distributionRows.map(mapProfitDistribution);
   const fundBalance = (fundRows[0]?.balance_cents ?? 0) / 100;
-  return { clients, documents, movements, partners, documentMargins, clientMargins, profitSettings, distributions, fundBalance };
+  const fundAllocated = (fundRows[0]?.allocated_cents ?? 0) / 100;
+  const fundSpent = (fundRows[0]?.spent_cents ?? 0) / 100;
+  return { clients, documents, movements, partners, documentMargins, clientMargins, profitSettings, distributions, fundBalance, fundAllocated, fundSpent };
 }
 
 function mapProfitDistribution(row: ProfitDistributionRow): ProfitDistribution {
@@ -135,12 +137,12 @@ export async function createDocumentPayment(input: NewPaymentInput) {
 }
 
 export async function createExpense(input: NewExpenseInput) {
-  const [row] = await dbRequest<MovementRow[]>("rpc/create_finance_expense_v6", { method: "POST", body: JSON.stringify({ p_category: input.category, p_description: input.description, p_amount_cents: Math.round(input.amount * 100), p_spent_by: input.spentBy, p_occurred_at: input.occurredAt, p_document_id: input.documentId || null, p_request_id: input.requestId }) });
+  const [row] = await dbRequest<MovementRow[]>("rpc/create_finance_expense_v6_1", { method: "POST", body: JSON.stringify({ p_category: input.category, p_description: input.description, p_amount_cents: Math.round(input.amount * 100), p_spent_by: input.spentBy, p_occurred_at: input.occurredAt, p_document_id: input.documentId || null, p_request_id: input.requestId }) });
   return mapMovement(row);
 }
 
 export async function updateExpense(input: Movement) {
-  const [row] = await dbRequest<MovementRow[]>("rpc/update_finance_expense_v6", { method: "POST", body: JSON.stringify({ p_id: input.id, p_category: input.category, p_description: input.description, p_amount_cents: Math.round(input.amount * 100), p_spent_by: input.spentBy, p_occurred_at: input.occurredAt, p_document_id: input.documentId || null, p_expected_updated_at: input.updatedAt }) });
+  const [row] = await dbRequest<MovementRow[]>("rpc/update_finance_expense_v6_1", { method: "POST", body: JSON.stringify({ p_id: input.id, p_category: input.category, p_description: input.description, p_amount_cents: Math.round(input.amount * 100), p_spent_by: input.spentBy, p_occurred_at: input.occurredAt, p_document_id: input.documentId || null, p_expected_updated_at: input.updatedAt }) });
   return mapMovement(row);
 }
 
