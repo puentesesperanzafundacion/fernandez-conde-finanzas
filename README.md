@@ -1,6 +1,6 @@
 # Fernández Conde Finanzas
 
-Aplicación web progresiva para clientes, presupuestos, pagos por actos procesales, recibos de abonos, gastos e informes históricos de Fernández Conde, S.C.
+Aplicación web progresiva para clientes, presupuestos, pagos por actos procesales, recibos de abonos, cuentas por cobrar, gastos, márgenes e informes históricos de Fernández Conde, S.C.
 
 ## Arquitectura gratuita
 
@@ -17,8 +17,9 @@ Aplicación web progresiva para clientes, presupuestos, pagos por actos procesal
 4. Confirma que sólo estén esas dos cuentas y ejecuta [`supabase/migration_integrity_v2.sql`](supabase/migration_integrity_v2.sql). La migración exige exactamente dos usuarios, incorpora operaciones atómicas, bitácora y papelera.
 5. Ejecuta [`supabase/migration_product_v3.sql`](supabase/migration_product_v3.sql) para habilitar clasificación de clientes, pagos parciales, gastos atribuibles y escritura exclusiva mediante RPC.
 6. Ejecuta [`supabase/migration_product_v5.sql`](supabase/migration_product_v5.sql) para habilitar acompañantes, claves internas, planes de pago por actos procesales y recibos por abono.
-7. Mantén deshabilitado el registro público de usuarios.
-8. La publicación automática configura GitHub Pages desde el flujo incluido en el repositorio.
+7. Ejecuta [`supabase/migration_product_v6.sql`](supabase/migration_product_v6.sql) para habilitar cuentas por cobrar, márgenes derivados, gastos por expediente, fondo y reparto histórico de utilidades.
+8. Mantén deshabilitado el registro público de usuarios.
+9. La publicación automática configura GitHub Pages desde el flujo incluido en el repositorio.
 
 La clave `publishable` de Supabase está diseñada para aplicaciones cliente y puede utilizarse en el navegador. La protección de los datos depende de Authentication, la lista `partners` y las políticas RLS incluidas en la migración.
 
@@ -28,7 +29,10 @@ La clave `publishable` de Supabase está diseñada para aplicaciones cliente y p
 2. Si V2 todavía no está aplicada, ejecuta una sola vez `supabase/migration_integrity_v2.sql`.
 3. Ejecuta `supabase/migration_product_v3.sql` en SQL Editor.
 4. Ejecuta `supabase/migration_product_v5.sql` en SQL Editor.
-5. Publica el código actualizado. No inviertas este orden: la aplicación V5 utiliza las funciones creadas por la migración.
+5. Respalda los datos y ejecuta `supabase/migration_product_v6.sql` en SQL Editor.
+6. Publica el código actualizado. No inviertas este orden: la aplicación V6 utiliza las vistas y funciones creadas por la migración.
+
+Para volver desde V6, restaura el código anterior y ejecuta [`supabase/migration_product_v6_rollback.sql`](supabase/migration_product_v6_rollback.sql). El rollback elimina sólo objetos agregados por V6.
 
 ## Desarrollo
 

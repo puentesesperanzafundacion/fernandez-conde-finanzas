@@ -10,8 +10,12 @@ export type PaymentStage = { id: string; description: string; amount: number };
 export type Client = { id: number; name: string; email: string; phone: string; stage: ClientStage; internalKey: string; companions: Companion[]; total: number; updatedAt: string };
 export type FinanceDocument = { id: number; folio: string; kind: DocumentKind; clientId: number; client: string; concept: string; amount: number; paidAmount: number; balance: number; paymentPlan: PaymentStage[]; status: Status; date: string; issuedAt: string; notes: string; updatedAt: string };
 export type Movement = { id: number; type: "Ingreso" | "Gasto"; category: string; description: string; amount: number; occurredAt: string; documentId?: number | null; paymentStageId?: string | null; spentBy: string; note: string; updatedAt: string };
+export type DocumentMargin = { documentId: number; clientId: number; folio: string; concept: string; income: number; expenses: number; margin: number; marginPercent: number | null };
+export type ClientMargin = { clientId: number; clientName: string; income: number; expenses: number; margin: number; marginPercent: number | null };
+export type ProfitSettings = { fundPercent: number; oscarPercent: number; danPercent: number; updatedAt: string };
+export type ProfitDistribution = { id: number; periodStart: string; periodEnd: string; income: number; expenses: number; netProfit: number; fundAmount: number; oscarAmount: number; danAmount: number; fundPercent: number; oscarPercent: number; danPercent: number; createdAt: string };
 export type NewDocumentInput = Omit<FinanceDocument, "id" | "folio" | "date" | "issuedAt" | "paidAmount" | "balance" | "updatedAt"> & { requestId: string };
-export type NewExpenseInput = Pick<Movement, "category" | "description" | "amount" | "spentBy" | "occurredAt"> & { requestId: string };
+export type NewExpenseInput = Pick<Movement, "category" | "description" | "amount" | "spentBy" | "occurredAt" | "documentId"> & { requestId: string };
 export type NewPaymentInput = Pick<Movement, "amount" | "occurredAt" | "note" | "paymentStageId"> & { documentId: number; requestId: string };
 export type TrashItem = { entity: RecordEntity; id: number; label: string; detail: string; deletedAt: string; deletedBy: string; updatedAt: string };
 export type AuditEntry = { id: number; entity: RecordEntity; recordId: number; action: "created" | "updated" | "trashed" | "restored"; actor: string; occurredAt: string };
@@ -20,6 +24,11 @@ type ClientRow = { id: number; name: string; email: string; phone: string; stage
 type DocumentRow = { id: number; folio: string; kind: DocumentKind; client_id: number; concept: string; amount_cents: number; payment_plan?: Array<{ id: string; description: string; amountCents: number }> | null; status: Status; notes: string; issued_at: string; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; clients?: { name: string } | null };
 type MovementRow = { id: number; type: "Ingreso" | "Gasto"; category: string; description: string; amount_cents: number; occurred_at: string; document_id?: number | null; payment_stage_id?: string | null; spent_by?: string | null; note?: string | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; deleted_with_document?: boolean; documents?: { folio: string } | null };
 type PartnerRow = { user_id: string; display_name: string; email: string };
+type DocumentMarginRow = { document_id: number; client_id: number; folio: string; concept: string; income_cents: number; expense_cents: number; margin_cents: number; margin_percent: number | null };
+type ClientMarginRow = { client_id: number; client_name: string; income_cents: number; expense_cents: number; margin_cents: number; margin_percent: number | null };
+type ProfitSettingsRow = { fund_bps: number; oscar_bps: number; dan_bps: number; updated_at: string };
+type ProfitDistributionRow = { id: number; period_start: string; period_end: string; income_cents: number; expense_cents: number; net_profit_cents: number; fund_cents: number; oscar_cents: number; dan_cents: number; fund_bps: number; oscar_bps: number; dan_bps: number; created_at: string };
+type FundBalanceRow = { balance_cents: number };
 type AuditRow = { id: number; entity: RecordEntity; record_id: number; action: AuditEntry["action"]; actor_id?: string | null; occurred_at: string };
 type TimestampRow = { updated_at: string };
 type CreatedDocumentRow = TimestampRow & { id: number; folio: string; issued_at: string };
@@ -38,11 +47,16 @@ function mapDocument(row: DocumentRow, paidAmount: number): FinanceDocument {
 }
 
 export async function loadFinanceData() {
-  const [clientRows, documentRows, movementRows, partnerRows] = await Promise.all([
+  const [clientRows, documentRows, movementRows, partnerRows, documentMarginRows, clientMarginRows, settingsRows, distributionRows, fundRows] = await Promise.all([
     dbRequest<ClientRow[]>("clients?select=*&deleted_at=is.null&order=id.desc"),
     dbRequest<DocumentRow[]>("documents?select=*,clients(name)&deleted_at=is.null&order=id.desc"),
     dbRequest<MovementRow[]>("movements?select=*&deleted_at=is.null&order=occurred_at.desc,id.desc"),
     dbRequest<PartnerRow[]>("partners?select=user_id,display_name,email&order=display_name"),
+    dbRequest<DocumentMarginRow[]>("finance_document_margins_v6?select=*&order=folio"),
+    dbRequest<ClientMarginRow[]>("finance_client_margins_v6?select=*&order=client_name"),
+    dbRequest<ProfitSettingsRow[]>("profit_distribution_settings_v6?select=*&limit=1"),
+    dbRequest<ProfitDistributionRow[]>("profit_distributions_v6?select=*&order=period_start.desc,created_at.desc"),
+    dbRequest<FundBalanceRow[]>("finance_fund_balance_v6?select=balance_cents"),
   ]);
   const movements = movementRows.map(mapMovement);
   const paidByDocument = new Map<number, number>();
@@ -50,7 +64,18 @@ export async function loadFinanceData() {
   const documents = documentRows.map((row) => mapDocument(row, paidByDocument.get(row.id) ?? 0));
   const clients: Client[] = clientRows.map((row) => ({ id: row.id, name: row.name, email: row.email, phone: row.phone, stage: row.stage ?? "Pendiente", internalKey: row.internal_key ?? "", companions: Array.isArray(row.companions) ? row.companions : [], updatedAt: row.updated_at, total: documents.filter((document) => document.clientId === row.id).reduce((sum, document) => sum + document.paidAmount, 0) }));
   const partners: Partner[] = partnerRows.map((row) => ({ userId: row.user_id, name: row.display_name || row.email, email: row.email }));
-  return { clients, documents, movements, partners };
+  const documentMargins: DocumentMargin[] = documentMarginRows.map((row) => ({ documentId: row.document_id, clientId: row.client_id, folio: row.folio, concept: row.concept, income: row.income_cents / 100, expenses: row.expense_cents / 100, margin: row.margin_cents / 100, marginPercent: row.margin_percent === null ? null : Number(row.margin_percent) }));
+  const clientMargins: ClientMargin[] = clientMarginRows.map((row) => ({ clientId: row.client_id, clientName: row.client_name, income: row.income_cents / 100, expenses: row.expense_cents / 100, margin: row.margin_cents / 100, marginPercent: row.margin_percent === null ? null : Number(row.margin_percent) }));
+  const settingsRow = settingsRows[0];
+  if (!settingsRow) throw new Error("No se encontró la configuración del reparto de utilidades.");
+  const profitSettings: ProfitSettings = { fundPercent: settingsRow.fund_bps / 100, oscarPercent: settingsRow.oscar_bps / 100, danPercent: settingsRow.dan_bps / 100, updatedAt: settingsRow.updated_at };
+  const distributions: ProfitDistribution[] = distributionRows.map(mapProfitDistribution);
+  const fundBalance = (fundRows[0]?.balance_cents ?? 0) / 100;
+  return { clients, documents, movements, partners, documentMargins, clientMargins, profitSettings, distributions, fundBalance };
+}
+
+function mapProfitDistribution(row: ProfitDistributionRow): ProfitDistribution {
+  return { id: row.id, periodStart: row.period_start, periodEnd: row.period_end, income: row.income_cents / 100, expenses: row.expense_cents / 100, netProfit: row.net_profit_cents / 100, fundAmount: row.fund_cents / 100, oscarAmount: row.oscar_cents / 100, danAmount: row.dan_cents / 100, fundPercent: row.fund_bps / 100, oscarPercent: row.oscar_bps / 100, danPercent: row.dan_bps / 100, createdAt: row.created_at };
 }
 
 export async function loadTrashData() {
@@ -110,13 +135,23 @@ export async function createDocumentPayment(input: NewPaymentInput) {
 }
 
 export async function createExpense(input: NewExpenseInput) {
-  const [row] = await dbRequest<MovementRow[]>("rpc/create_finance_expense", { method: "POST", body: JSON.stringify({ p_category: input.category, p_description: input.description, p_amount_cents: Math.round(input.amount * 100), p_spent_by: input.spentBy, p_occurred_at: input.occurredAt, p_request_id: input.requestId }) });
+  const [row] = await dbRequest<MovementRow[]>("rpc/create_finance_expense_v6", { method: "POST", body: JSON.stringify({ p_category: input.category, p_description: input.description, p_amount_cents: Math.round(input.amount * 100), p_spent_by: input.spentBy, p_occurred_at: input.occurredAt, p_document_id: input.documentId || null, p_request_id: input.requestId }) });
   return mapMovement(row);
 }
 
 export async function updateExpense(input: Movement) {
-  const [row] = await dbRequest<MovementRow[]>("rpc/update_finance_expense", { method: "POST", body: JSON.stringify({ p_id: input.id, p_category: input.category, p_description: input.description, p_amount_cents: Math.round(input.amount * 100), p_spent_by: input.spentBy, p_occurred_at: input.occurredAt, p_expected_updated_at: input.updatedAt }) });
+  const [row] = await dbRequest<MovementRow[]>("rpc/update_finance_expense_v6", { method: "POST", body: JSON.stringify({ p_id: input.id, p_category: input.category, p_description: input.description, p_amount_cents: Math.round(input.amount * 100), p_spent_by: input.spentBy, p_occurred_at: input.occurredAt, p_document_id: input.documentId || null, p_expected_updated_at: input.updatedAt }) });
   return mapMovement(row);
+}
+
+export async function updateProfitSettings(input: Omit<ProfitSettings, "updatedAt">) {
+  const [row] = await dbRequest<ProfitSettingsRow[]>("rpc/update_profit_distribution_settings_v6", { method: "POST", body: JSON.stringify({ p_fund_bps: Math.round(input.fundPercent * 100), p_oscar_bps: Math.round(input.oscarPercent * 100), p_dan_bps: Math.round(input.danPercent * 100) }) });
+  return { fundPercent: row.fund_bps / 100, oscarPercent: row.oscar_bps / 100, danPercent: row.dan_bps / 100, updatedAt: row.updated_at } as ProfitSettings;
+}
+
+export async function createProfitDistribution(input: { periodStart: string; periodEnd: string; requestId: string }) {
+  const [row] = await dbRequest<ProfitDistributionRow[]>("rpc/create_profit_distribution_v6", { method: "POST", body: JSON.stringify({ p_period_start: input.periodStart, p_period_end: input.periodEnd, p_request_id: input.requestId }) });
+  return mapProfitDistribution(row);
 }
 
 export async function setRecordTrashed(item: Pick<TrashItem, "entity" | "id" | "updatedAt">, trashed: boolean) {
