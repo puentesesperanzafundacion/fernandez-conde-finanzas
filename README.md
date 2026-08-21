@@ -19,8 +19,9 @@ Aplicación web progresiva para clientes, presupuestos, pagos por actos procesal
 6. Ejecuta [`supabase/migration_product_v5.sql`](supabase/migration_product_v5.sql) para habilitar acompañantes, claves internas, planes de pago por actos procesales y recibos por abono.
 7. Ejecuta [`supabase/migration_product_v6.sql`](supabase/migration_product_v6.sql) para habilitar cuentas por cobrar, márgenes derivados, gastos por expediente, fondo y reparto histórico de utilidades.
 8. Ejecuta [`supabase/migration_product_v6_1_fund_expenses.sql`](supabase/migration_product_v6_1_fund_expenses.sql) para permitir gastos cubiertos por el Fondo y descontarlos de su saldo.
-9. Mantén deshabilitado el registro público de usuarios.
-10. La publicación automática configura GitHub Pages desde el flujo incluido en el repositorio.
+9. Ejecuta [`supabase/migration_product_v6_2_distribution_voids.sql`](supabase/migration_product_v6_2_distribution_voids.sql) para anular, corregir y restaurar repartos sin borrar su histórico.
+10. Mantén deshabilitado el registro público de usuarios.
+11. La publicación automática configura GitHub Pages desde el flujo incluido en el repositorio.
 
 La clave `publishable` de Supabase está diseñada para aplicaciones cliente y puede utilizarse en el navegador. La protección de los datos depende de Authentication, la lista `partners` y las políticas RLS incluidas en la migración.
 
@@ -32,11 +33,14 @@ La clave `publishable` de Supabase está diseñada para aplicaciones cliente y p
 4. Ejecuta `supabase/migration_product_v5.sql` en SQL Editor.
 5. Respalda los datos y ejecuta `supabase/migration_product_v6.sql` en SQL Editor.
 6. Ejecuta `supabase/migration_product_v6_1_fund_expenses.sql` en SQL Editor.
-7. Publica el código actualizado. No inviertas este orden: la aplicación utiliza las vistas y funciones creadas por las migraciones.
+7. Ejecuta `supabase/migration_product_v6_2_distribution_voids.sql` en SQL Editor.
+8. Publica el código actualizado. No inviertas este orden: la aplicación utiliza las vistas y funciones creadas por las migraciones.
 
 Para volver desde V6, restaura el código anterior y ejecuta [`supabase/migration_product_v6_rollback.sql`](supabase/migration_product_v6_rollback.sql). El rollback elimina sólo objetos agregados por V6.
 
 Para revertir únicamente V6.1, ejecuta [`supabase/migration_product_v6_1_fund_expenses_rollback.sql`](supabase/migration_product_v6_1_fund_expenses_rollback.sql) y restaura la rama de respaldo correspondiente.
+
+Para revertir únicamente V6.2, ejecuta [`supabase/migration_product_v6_2_distribution_voids_rollback.sql`](supabase/migration_product_v6_2_distribution_voids_rollback.sql).
 
 ## Desarrollo
 

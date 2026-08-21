@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { jsPDF } from "jspdf";
 import {
   createClient, createDocument, createDocumentPayment, createExpense, createProfitDistribution, formatDate,
-  loadAuditLog, loadFinanceData, loadTrashData, markDocumentPaid, setRecordTrashed,
+  loadAuditLog, loadFinanceData, loadTrashData, markDocumentPaid, setProfitDistributionVoided, setRecordTrashed,
   updateClient, updateDocument, updateExpense, updateProfitSettings, type AuditEntry, type Client,
   type ClientMargin, type ClientStage, type Companion, type DocumentMargin, type FinanceDocument as Document,
   type Movement, type NewDocumentInput, type NewExpenseInput, type NewPaymentInput,
@@ -78,6 +78,7 @@ export default function HomePage() {
   const [clientMargins, setClientMargins] = useState<ClientMargin[]>([]);
   const [profitSettings, setProfitSettings] = useState<ProfitSettings>({ fundPercent: 20, oscarPercent: 40, danPercent: 40, updatedAt: "" });
   const [distributions, setDistributions] = useState<ProfitDistribution[]>([]);
+  const [voidedDistributions, setVoidedDistributions] = useState<ProfitDistribution[]>([]);
   const [fundBalance, setFundBalance] = useState(0);
   const [fundAllocated, setFundAllocated] = useState(0);
   const [fundSpent, setFundSpent] = useState(0);
@@ -106,6 +107,7 @@ export default function HomePage() {
     setClientMargins(data.clientMargins);
     setProfitSettings(data.profitSettings);
     setDistributions(data.distributions);
+    setVoidedDistributions(data.voidedDistributions);
     setFundBalance(data.fundBalance);
     setFundAllocated(data.fundAllocated);
     setFundSpent(data.fundSpent);
@@ -271,6 +273,17 @@ export default function HomePage() {
     } catch (error) { notify(error instanceof Error ? error.message : "No fue posible calcular el reparto"); }
     finally { setIsSaving(false); }
   };
+  const changeDistributionVoid = async (distribution: ProfitDistribution, voided: boolean) => {
+    const action = voided ? "anular" : "restaurar";
+    if (voided && !window.confirm("¿Anular este reparto? Dejará de contar en el Fondo y podrás volver a calcular el periodo.")) return;
+    setIsSaving(true);
+    try {
+      await setProfitDistributionVoided(distribution.id, voided);
+      await refreshData();
+      notify(voided ? "Reparto anulado; el periodo puede recalcularse" : "Reparto restaurado");
+    } catch (error) { notify(error instanceof Error ? error.message : `No fue posible ${action} el reparto`); }
+    finally { setIsSaving(false); }
+  };
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setIsSaving(true);
@@ -434,7 +447,7 @@ export default function HomePage() {
       {tab === "clientes" && <ClientsView clients={clients} clientMargins={clientMargins} query={query} setQuery={setQuery} openClient={() => setClientOpen(true)} onEdit={setEditingClient} onDelete={(client) => setDeleteTarget({ type: "client", id: client.id, label: client.name, updatedAt: client.updatedAt })} />}
       {tab === "movimientos" && <MovementsView movements={movements} documents={documents} openExpense={() => setExpenseOpen(true)} onEdit={setEditingMovement} onDelete={(movement) => setDeleteTarget({ type: "movement", id: movement.id, label: movement.description, updatedAt: movement.updatedAt })} />}
       {tab === "informes" && <ReportsView documents={documents} movements={movements} clients={clients} documentMargins={documentMargins} clientMargins={clientMargins} />}
-      {tab === "reparto" && <ProfitDistributionView settings={profitSettings} distributions={distributions} fundBalance={fundBalance} fundAllocated={fundAllocated} fundSpent={fundSpent} movements={movements} saving={isSaving} onSaveSettings={saveDistributionSettings} onCreateDistribution={addDistribution} />}
+      {tab === "reparto" && <ProfitDistributionView settings={profitSettings} distributions={distributions} voidedDistributions={voidedDistributions} fundBalance={fundBalance} fundAllocated={fundAllocated} fundSpent={fundSpent} movements={movements} saving={isSaving} onSaveSettings={saveDistributionSettings} onCreateDistribution={addDistribution} onVoid={(distribution) => changeDistributionVoid(distribution, true)} onRestore={(distribution) => changeDistributionVoid(distribution, false)} />}
       {tab === "papelera" && <TrashView items={trash} auditLog={auditLog} saving={isSaving} onRestore={restoreRecord} />}
     </section>
     <nav className="bottom-nav"><NavItem active={tab === "inicio"} icon={<Home />} label="Inicio" onClick={() => setTab("inicio")} /><NavItem active={tab === "documentos"} icon={<FileText />} label="Docs" onClick={() => setTab("documentos")} /><button className="mobile-create" onClick={openComposer} aria-label="Nuevo presupuesto"><Plus /></button><NavItem active={tab === "clientes"} icon={<Users />} label="Clientes" onClick={() => setTab("clientes")} /><NavItem active={tab === "movimientos"} icon={<WalletCards />} label="Gastos" onClick={() => setTab("movimientos")} /><NavItem active={tab === "informes"} icon={<BarChart3 />} label="Informes" onClick={() => setTab("informes")} /><NavItem active={tab === "reparto"} icon={<CircleDollarSign />} label="Reparto" onClick={() => setTab("reparto")} /><NavItem active={tab === "papelera"} icon={<Trash2 />} label="Papelera" onClick={() => setTab("papelera")} /></nav>
@@ -620,7 +633,7 @@ function MarginPanel({ title, subtitle, rows }: { title: string; subtitle: strin
   return <article className="panel margin-panel"><div className="panel-heading"><div><p className="eyebrow">{subtitle.toUpperCase()}</p><h3>{title}</h3></div></div><div className="margin-list">{rows.map((row) => <div className="margin-row" key={row.id}><span><strong>{row.label}</strong><small>{row.detail}</small></span><span><small>Ingresos {money.format(row.income)} · Gastos {money.format(row.expenses)}</small><strong className={row.margin < 0 ? "negative" : "positive"}>{money.format(row.margin)}{row.percent !== null && ` · ${row.percent}%`}</strong></span></div>)}{rows.length === 0 && <p className="payment-empty">No hay expedientes con movimientos en este periodo.</p>}</div></article>;
 }
 
-function ProfitDistributionView({ settings, distributions, fundBalance, fundAllocated, fundSpent, movements, saving, onSaveSettings, onCreateDistribution }: { settings: ProfitSettings; distributions: ProfitDistribution[]; fundBalance: number; fundAllocated: number; fundSpent: number; movements: Movement[]; saving: boolean; onSaveSettings: (settings: Omit<ProfitSettings, "updatedAt">) => void; onCreateDistribution: (periodStart: string, periodEnd: string) => void }) {
+function ProfitDistributionView({ settings, distributions, voidedDistributions, fundBalance, fundAllocated, fundSpent, movements, saving, onSaveSettings, onCreateDistribution, onVoid, onRestore }: { settings: ProfitSettings; distributions: ProfitDistribution[]; voidedDistributions: ProfitDistribution[]; fundBalance: number; fundAllocated: number; fundSpent: number; movements: Movement[]; saving: boolean; onSaveSettings: (settings: Omit<ProfitSettings, "updatedAt">) => void; onCreateDistribution: (periodStart: string, periodEnd: string) => void; onVoid: (distribution: ProfitDistribution) => void; onRestore: (distribution: ProfitDistribution) => void }) {
   const today = new Date();
   const initialStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)).toISOString().slice(0, 10);
   const initialEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
@@ -640,7 +653,8 @@ function ProfitDistributionView({ settings, distributions, fundBalance, fundAllo
     <section className="fund-hero"><div><p className="eyebrow">FONDO DE LA FIRMA</p><h2>{money.format(fundBalance)}</h2><p>Saldo disponible después de los gastos cubiertos por el Fondo.</p><div className="fund-breakdown"><span>Aportado <strong>{money.format(fundAllocated)}</strong></span><span>Gastado <strong>{money.format(fundSpent)}</strong></span></div></div><CircleDollarSign /></section>
     <section className="distribution-grid"><article className="panel distribution-calculator"><div className="panel-heading"><div><p className="eyebrow">NUEVO CÁLCULO</p><h3>Repartir utilidad del periodo</h3></div></div><div className="date-range"><label>Desde<input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label><label>Hasta<input type="date" value={periodEnd} min={periodStart} onChange={(event) => setPeriodEnd(event.target.value)} /></label></div><div className="distribution-preview"><div><span>Ingresos</span><strong>{money.format(income)}</strong></div><div><span>Gastos</span><strong>{money.format(expenses)}</strong></div><div className="net-profit"><span>Utilidad neta</span><strong>{money.format(netProfit)}</strong></div><div><span>Fondo · {settings.fundPercent}%</span><strong>{money.format(Math.max(netProfit, 0) * settings.fundPercent / 100)}</strong></div><div><span>Oscar · {settings.oscarPercent}%</span><strong>{money.format(Math.max(netProfit, 0) * settings.oscarPercent / 100)}</strong></div><div><span>Dan · {settings.danPercent}%</span><strong>{money.format(Math.max(netProfit, 0) * settings.danPercent / 100)}</strong></div></div>{netProfit <= 0 && <p className="distribution-warning">El periodo debe tener utilidad positiva para guardar un reparto.</p>}<button className="primary distribution-submit" disabled={saving || !periodStart || !periodEnd || periodEnd < periodStart || netProfit <= 0} onClick={() => onCreateDistribution(periodStart, periodEnd)}><Check /> {saving ? "Guardando…" : "Calcular y guardar reparto"}</button></article>
       <article className="panel settings-panel"><div className="panel-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h3>Porcentajes del reparto</h3></div></div><div className="percentage-fields"><label>Fondo (%)<input inputMode="decimal" value={fundPercent} onChange={(event) => setFundPercent(event.target.value)} /></label><label>Oscar (%)<input inputMode="decimal" value={oscarPercent} onChange={(event) => setOscarPercent(event.target.value)} /></label><label>Dan (%)<input inputMode="decimal" value={danPercent} onChange={(event) => setDanPercent(event.target.value)} /></label></div><div className={`percentage-total ${Math.abs(percentageTotal - 100) < .001 ? "complete" : "warning"}`}><span>Total</span><strong>{percentageTotal.toFixed(2)}%</strong></div><p>Los cambios solo afectan repartos futuros; el histórico conserva los porcentajes usados en cada cálculo.</p><button className="secondary" disabled={saving || !Number.isFinite(percentageTotal) || Math.abs(percentageTotal - 100) >= .001 || Object.values(percentages).some((value) => value < 0)} onClick={() => onSaveSettings(percentages)}><Check /> Guardar porcentajes</button></article></section>
-    <article className="panel distribution-history"><div className="panel-heading"><div><p className="eyebrow">HISTÓRICO</p><h3>Repartos guardados</h3></div><span className="count-pill">{distributions.length}</span></div>{distributions.map((distribution) => <div className="distribution-row" key={distribution.id}><span><strong>{formatDate(`${distribution.periodStart}T12:00:00Z`)} — {formatDate(`${distribution.periodEnd}T12:00:00Z`)}</strong><small>Utilidad {money.format(distribution.netProfit)} · Fondo {distribution.fundPercent}% · Oscar {distribution.oscarPercent}% · Dan {distribution.danPercent}%</small></span><span><strong>Fondo {money.format(distribution.fundAmount)}</strong><small>Oscar {money.format(distribution.oscarAmount)} · Dan {money.format(distribution.danAmount)}</small></span></div>)}{distributions.length === 0 && <EmptyState title="Aún no hay repartos" text="El primer cálculo guardado aparecerá aquí sin cambiar en el futuro." />}</article>
+    <article className="panel distribution-history"><div className="panel-heading"><div><p className="eyebrow">HISTÓRICO VIGENTE</p><h3>Repartos guardados</h3></div><span className="count-pill">{distributions.length}</span></div><p className="distribution-help">Si un reparto tiene un error, anúlalo y vuelve a calcular el periodo. El registro original se conservará como anulado.</p>{distributions.map((distribution) => <div className="distribution-row" key={distribution.id}><span><strong>{formatDate(`${distribution.periodStart}T12:00:00Z`)} — {formatDate(`${distribution.periodEnd}T12:00:00Z`)}</strong><small>Utilidad {money.format(distribution.netProfit)} · Fondo {distribution.fundPercent}% · Oscar {distribution.oscarPercent}% · Dan {distribution.danPercent}%</small></span><span><strong>Fondo {money.format(distribution.fundAmount)}</strong><small>Oscar {money.format(distribution.oscarAmount)} · Dan {money.format(distribution.danAmount)}</small></span><button className="icon-button danger-icon" disabled={saving} aria-label="Anular reparto" onClick={() => onVoid(distribution)}><Trash2 /></button></div>)}{distributions.length === 0 && <EmptyState title="Aún no hay repartos vigentes" text="Calcula uno nuevo o restaura un reparto anulado." />}</article>
+    {voidedDistributions.length > 0 && <article className="panel distribution-history voided-history"><div className="panel-heading"><div><p className="eyebrow">CORRECCIONES</p><h3>Repartos anulados</h3></div><span className="count-pill">{voidedDistributions.length}</span></div>{voidedDistributions.map((distribution) => <div className="distribution-row voided" key={distribution.id}><span><strong>{formatDate(`${distribution.periodStart}T12:00:00Z`)} — {formatDate(`${distribution.periodEnd}T12:00:00Z`)}</strong><small>Anulado · utilidad original {money.format(distribution.netProfit)}</small></span><span><strong>Fondo {money.format(distribution.fundAmount)}</strong><small>Oscar {money.format(distribution.oscarAmount)} · Dan {money.format(distribution.danAmount)}</small></span><button className="secondary compact" disabled={saving} onClick={() => onRestore(distribution)}><RotateCcw /> Restaurar</button></div>)}</article>}
   </div>;
 }
 
