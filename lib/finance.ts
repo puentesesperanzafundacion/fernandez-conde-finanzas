@@ -6,7 +6,7 @@ export type ClientStage = "Aceptado" | "Pendiente" | "Rechazado";
 export type RecordEntity = "client" | "document" | "movement";
 export type Partner = { userId: string; name: string; email: string };
 export type Companion = { name: string; relationship: string };
-export type PaymentStage = { id: string; description: string; amount: number };
+export type PaymentStage = { id: string; description: string; amount: number; scheduledDate?: string };
 export type Client = { id: number; name: string; email: string; phone: string; stage: ClientStage; internalKey: string; companions: Companion[]; total: number; updatedAt: string };
 export type FinanceDocument = { id: number; folio: string; kind: DocumentKind; clientId: number; client: string; concept: string; amount: number; paidAmount: number; balance: number; paymentPlan: PaymentStage[]; status: Status; date: string; issuedAt: string; notes: string; updatedAt: string };
 export type Movement = { id: number; type: "Ingreso" | "Gasto"; category: string; description: string; amount: number; occurredAt: string; documentId?: number | null; paymentStageId?: string | null; spentBy: string; note: string; updatedAt: string };
@@ -21,7 +21,7 @@ export type TrashItem = { entity: RecordEntity; id: number; label: string; detai
 export type AuditEntry = { id: number; entity: RecordEntity; recordId: number; action: "created" | "updated" | "trashed" | "restored"; actor: string; occurredAt: string };
 
 type ClientRow = { id: number; name: string; email: string; phone: string; stage: ClientStage; internal_key?: string | null; companions?: Companion[] | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null };
-type DocumentRow = { id: number; folio: string; kind: DocumentKind; client_id: number; concept: string; amount_cents: number; payment_plan?: Array<{ id: string; description: string; amountCents: number }> | null; status: Status; notes: string; issued_at: string; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; clients?: { name: string } | null };
+type DocumentRow = { id: number; folio: string; kind: DocumentKind; client_id: number; concept: string; amount_cents: number; payment_plan?: Array<{ id: string; description: string; amountCents: number; scheduledDate?: string | null }> | null; status: Status; notes: string; issued_at: string; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; clients?: { name: string } | null };
 type MovementRow = { id: number; type: "Ingreso" | "Gasto"; category: string; description: string; amount_cents: number; occurred_at: string; document_id?: number | null; payment_stage_id?: string | null; spent_by?: string | null; note?: string | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; deleted_with_document?: boolean; documents?: { folio: string } | null };
 type PartnerRow = { user_id: string; display_name: string; email: string };
 type DocumentMarginRow = { document_id: number; client_id: number; folio: string; concept: string; income_cents: number; expense_cents: number; margin_cents: number; margin_percent: number | null };
@@ -42,7 +42,7 @@ function mapMovement(row: MovementRow): Movement {
 }
 
 function mapDocument(row: DocumentRow, paidAmount: number): FinanceDocument {
-  const paymentPlan = (row.payment_plan ?? []).map((stage) => ({ id: stage.id, description: stage.description, amount: Number(stage.amountCents) / 100 }));
+  const paymentPlan = (row.payment_plan ?? []).map((stage) => ({ id: stage.id, description: stage.description, amount: Number(stage.amountCents) / 100, scheduledDate: stage.scheduledDate ?? "" }));
   return { id: row.id, folio: row.folio, kind: row.kind, clientId: row.client_id, client: row.clients?.name ?? "Cliente", concept: row.concept, amount: row.amount_cents / 100, paidAmount, balance: Math.max(row.amount_cents / 100 - paidAmount, 0), paymentPlan, status: row.status, date: formatDate(row.issued_at), issuedAt: row.issued_at, notes: row.notes ?? "", updatedAt: row.updated_at };
 }
 
@@ -117,13 +117,13 @@ export async function updateClient(input: Client) {
 }
 
 export async function createDocument(input: NewDocumentInput) {
-  const paymentPlan = input.paymentPlan.map((stage) => ({ id: stage.id, description: stage.description, amountCents: Math.round(stage.amount * 100) }));
+  const paymentPlan = input.paymentPlan.map((stage) => ({ id: stage.id, description: stage.description, amountCents: Math.round(stage.amount * 100), scheduledDate: stage.scheduledDate || null }));
   const [row] = await dbRequest<CreatedDocumentRow[]>("rpc/create_finance_budget_v5", { method: "POST", body: JSON.stringify({ p_client_id: input.clientId, p_concept: input.concept, p_amount_cents: Math.round(input.amount * 100), p_status: input.status, p_notes: input.notes, p_payment_plan: paymentPlan, p_request_id: input.requestId }) });
   return { ...input, id: row.id, folio: row.folio, date: formatDate(row.issued_at), issuedAt: row.issued_at, paidAmount: input.status === "Pagado" ? input.amount : 0, balance: input.status === "Pagado" ? 0 : input.amount, updatedAt: row.updated_at } as FinanceDocument;
 }
 
 export async function updateDocument(input: FinanceDocument) {
-  const paymentPlan = input.paymentPlan.map((stage) => ({ id: stage.id, description: stage.description, amountCents: Math.round(stage.amount * 100) }));
+  const paymentPlan = input.paymentPlan.map((stage) => ({ id: stage.id, description: stage.description, amountCents: Math.round(stage.amount * 100), scheduledDate: stage.scheduledDate || null }));
   const [row] = await dbRequest<TimestampRow[]>("rpc/update_finance_document_v5", { method: "POST", body: JSON.stringify({ p_id: input.id, p_kind: input.kind, p_client_id: input.clientId, p_concept: input.concept, p_amount_cents: Math.round(input.amount * 100), p_status: input.status, p_notes: input.notes, p_payment_plan: paymentPlan, p_expected_updated_at: input.updatedAt }) });
   return { ...input, updatedAt: row.updated_at };
 }
@@ -134,7 +134,7 @@ export async function markDocumentPaid(input: FinanceDocument) {
 }
 
 export async function createDocumentPayment(input: NewPaymentInput) {
-  const [row] = await dbRequest<MovementRow[]>("rpc/create_document_payment_v5", { method: "POST", body: JSON.stringify({ p_document_id: input.documentId, p_amount_cents: Math.round(input.amount * 100), p_occurred_at: input.occurredAt, p_note: input.note, p_payment_stage_id: input.paymentStageId || null, p_request_id: input.requestId }) });
+  const [row] = await dbRequest<MovementRow[]>("rpc/create_document_payment_v6_3", { method: "POST", body: JSON.stringify({ p_document_id: input.documentId, p_amount_cents: Math.round(input.amount * 100), p_occurred_at: input.occurredAt, p_note: input.note, p_payment_stage_id: input.paymentStageId || null, p_request_id: input.requestId }) });
   return mapMovement(row);
 }
 
