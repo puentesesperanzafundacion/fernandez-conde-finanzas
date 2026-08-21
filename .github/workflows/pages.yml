@@ -27,8 +27,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Revisar dependencias
+        run: npm audit --audit-level=high
+      - name: Revisar calidad y tipos
+        run: npm run lint && npm run typecheck
       - name: Construir
-        run: npx next build
+        run: npm run build
         env:
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
           NEXT_PUBLIC_SUPABASE_URL: https://cqdtlmzrxwbdhwotquoq.supabase.co
