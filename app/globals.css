@@ -122,3 +122,18 @@ button,input,select,textarea { font:inherit } button { cursor:pointer }
   .status-report-grid { grid-template-columns:1fr }
   .payment-heading { align-items:flex-start; flex-direction:column }.payment-heading button { width:100% }
 }
+
+/* V5: client companions and procedural payment plans */
+.client-key { width:fit-content; margin:-7px 0 12px; padding:4px 8px; border-radius:6px; color:var(--navy); background:#edf2f7; font-size:10px; font-weight:800 }
+.companions-summary { margin-top:14px; padding:11px 12px; display:flex; flex-direction:column; gap:4px; border-radius:9px; color:var(--muted); background:#f7f8fa; font-size:10px }.companions-summary strong { color:var(--ink); margin-bottom:2px }
+.repeatable-field,.payment-plan-editor { margin-top:20px; padding:15px; border:1px solid var(--line); border-radius:11px; background:#f8f9fa }
+.repeatable-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--ink); font-size:12px; font-weight:800 }.repeatable-heading .secondary { min-height:36px; padding:0 11px; font-size:10px }
+.repeatable-row { margin-top:11px; display:grid; align-items:center; gap:8px }.companion-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 38px }.plan-row { grid-template-columns:minmax(0,1.5fr) minmax(120px,.7fr) 38px }.repeatable-row .icon-button { width:36px; height:36px }
+.toggle-field { padding:14px; flex-direction:row!important; align-items:flex-start; border:1px solid var(--line); border-radius:10px; background:#f8f9fa }.toggle-field>input { width:18px!important; min-height:18px!important; flex:0 0 auto; margin:2px 0 0; accent-color:var(--navy) }.toggle-field>span { display:flex; flex-direction:column; gap:4px }.toggle-field small { color:var(--muted); font-weight:400; line-height:1.4 }
+.plan-total { margin-top:13px; padding:11px 12px; display:grid; grid-template-columns:1fr auto; gap:3px 10px; border-radius:8px; font-size:11px }.plan-total span { color:var(--muted) }.plan-total small { grid-column:1 / -1 }.plan-total.complete { color:var(--green); background:#e9f7f1 }.plan-total.warning { color:#8a5b12; background:#fff4df }
+.stage-breakdown,.payment-breakdown { margin-top:18px; border:1px solid var(--line); border-radius:11px; overflow:hidden }.stage-row { min-height:60px; padding:11px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid var(--line) }.stage-row>span:first-child { min-width:0; display:flex; flex-direction:column; gap:4px }.stage-row small { color:var(--muted); font-size:10px }.stage-status { flex:0 0 auto; padding:5px 8px; border-radius:99px; font-size:9px; font-weight:800 }.stage-status.cubierto { color:var(--green); background:#e9f7f1 }.stage-status.abonado { color:var(--blue); background:#eaf2fc }.stage-status.pendiente { color:var(--amber); background:#fff4df }
+.payment-row-actions { flex:0 0 auto; display:flex; gap:5px }.payment-row-actions .icon-button { width:33px; height:33px }.payment-row-actions .icon-button svg { width:15px }
+@media (max-width:760px) {
+  .companion-row,.plan-row { grid-template-columns:1fr 38px }.companion-row input:nth-child(2),.plan-row .money-input { grid-column:1 }.companion-row .icon-button,.plan-row .icon-button { grid-column:2; grid-row:1 }
+  .payment-row { align-items:flex-start; flex-direction:column }.payment-row-actions { align-self:flex-end }
+}
