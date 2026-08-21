@@ -91,6 +91,16 @@ button,input,select,textarea { font:inherit } button { cursor:pointer }
 .field-help { color:var(--muted); font-size:10px; font-weight:400; line-height:1.4 }
 .payment-context { padding:17px; display:flex; flex-direction:column; gap:5px; border-radius:11px; color:var(--navy); background:#f2f5f8 }
 .payment-context span,.payment-context small { color:var(--muted) }
+.payment-overlay { z-index:60 }
+.budget-decision { margin-top:18px; padding:15px 16px; border:1px solid var(--line); border-radius:11px; background:#f8f9fa }
+.budget-decision h3 { margin:3px 0 0; color:var(--ink); font-size:14px }
+.budget-decision>small { display:block; margin-top:10px; color:var(--muted); font-size:10px; line-height:1.45 }
+.decision-buttons { margin-top:12px; display:grid; grid-template-columns:repeat(3,1fr); gap:7px }
+.decision-buttons button { min-height:38px; padding:0 8px; border:1px solid #d8dde3; border-radius:8px; color:var(--muted); background:#fff; font-size:10px; font-weight:800 }
+.decision-buttons button:disabled { opacity:.6 }
+.decision-buttons button.selected:nth-child(1) { color:#8a5b12; border-color:#e4c079; background:#fff4df }
+.decision-buttons button.selected:nth-child(2) { color:var(--green); border-color:#9ed5bd; background:#e9f7f1 }
+.decision-buttons button.selected:nth-child(3) { color:var(--red); border-color:#e6a5a5; background:#ffeded }
 .payment-summary { margin-top:17px; padding:17px; display:grid; grid-template-columns:1fr 1fr; gap:12px; border:1px solid var(--line); border-radius:11px; background:#fbfcfd }
 .payment-summary>div:not(.payment-progress) { display:flex; flex-direction:column; gap:5px }
 .payment-summary span { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em }
