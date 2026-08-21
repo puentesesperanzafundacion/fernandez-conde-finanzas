@@ -1,5 +1,16 @@
 begin;
 
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'movements' and column_name = 'spent_by'
+  ) then
+    raise exception 'La actualización V3 ya está aplicada. No vuelvas a ejecutar migration_integrity_v2.sql.';
+  end if;
+end
+$$;
+
 -- Only the users that already exist when this migration runs become partners.
 -- Before running it, confirm that Authentication > Users contains only the
 -- two accounts authorized by Fernández Conde, S.C.
@@ -10,15 +21,28 @@ create table if not exists public.partners (
   created_at timestamptz not null default now()
 );
 
-insert into public.partners (user_id, email, display_name)
-select
-  id,
-  coalesce(email, ''),
-  coalesce(nullif(raw_user_meta_data ->> 'name', ''), split_part(coalesce(email, ''), '@', 1))
-from auth.users
-on conflict (user_id) do update
-set email = excluded.email,
-    display_name = excluded.display_name;
+do $$
+declare
+  v_partner_count integer;
+  v_user_count integer;
+begin
+  select count(*) into v_partner_count from public.partners;
+  if v_partner_count = 0 then
+    select count(*) into v_user_count from auth.users;
+    if v_user_count <> 2 then
+      raise exception 'La instalación requiere exactamente dos usuarios en Authentication > Users; se encontraron %.', v_user_count;
+    end if;
+    insert into public.partners (user_id, email, display_name)
+    select
+      id,
+      coalesce(email, ''),
+      coalesce(nullif(raw_user_meta_data ->> 'name', ''), split_part(coalesce(email, ''), '@', 1))
+    from auth.users;
+  elsif v_partner_count <> 2 then
+    raise exception 'La tabla partners debe contener exactamente dos socios; se encontraron %.', v_partner_count;
+  end if;
+end
+$$;
 
 alter table public.partners enable row level security;
 

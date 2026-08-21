@@ -1,27 +1,49 @@
 "use client";
 
 import {
-  ArrowDownRight, ArrowUpRight, BarChart3, CalendarDays, Check, ChevronRight,
-  CircleDollarSign, Clock3, Download, FileCheck2, FilePlus2, FileText, Home,
-  AlertTriangle, History, LogOut, Mail, Menu, Pencil, Phone, Plus, ReceiptText,
-  RotateCcw, Search, Send, Trash2, TrendingUp, UserRound, Users, WalletCards, WifiOff, X,
+  AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, CalendarDays, Check,
+  ChevronLeft, ChevronRight, CircleDollarSign, Clock3, Download, FileCheck2,
+  FilePlus2, FileText, Home, History, LogOut, Mail, Pencil, Phone, Plus,
+  ReceiptText, RotateCcw, Search, Send, Trash2, TrendingUp, UserRound, Users,
+  WalletCards, WifiOff, X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { jsPDF } from "jspdf";
 import {
-  createClient, createDocument, createExpense, loadAuditLog, loadFinanceData, loadTrashData,
-  markDocumentPaid, setRecordTrashed, updateClient, updateDocument, updateExpense,
-  type AuditEntry, type Client, type DocumentKind, type FinanceDocument as Document,
-  type Movement, type NewDocumentInput, type RecordEntity, type Status, type TrashItem,
+  createClient, createDocument, createDocumentPayment, createExpense, formatDate,
+  loadAuditLog, loadFinanceData, loadTrashData, markDocumentPaid, setRecordTrashed,
+  updateClient, updateDocument, updateExpense, type AuditEntry, type Client,
+  type ClientStage, type DocumentKind, type FinanceDocument as Document,
+  type Movement, type NewDocumentInput, type NewExpenseInput, type NewPaymentInput,
+  type Partner, type RecordEntity, type Status, type TrashItem,
 } from "../lib/finance";
 import { getSession, isSupabaseConfigured, signIn, signOut, type Session } from "../lib/supabase";
 
 type Tab = "inicio" | "documentos" | "clientes" | "movimientos" | "informes" | "papelera";
 type DeleteTarget = { type: RecordEntity; id: number; label: string; updatedAt: string };
+type DashboardTotals = { income: number; pending: number; quoted: number; expenses: number };
 
 const money = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 2 });
 const brandLogoSrc = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/logo-fernandez-conde.png`;
-const servicePresets = ["Consulta y estrategia jurídica", "Juicio de amparo migratorio", "Regularización migratoria", "Asesoría corporativa mensual", "Elaboración y revisión de contrato"];
+const servicePresets = [
+  "Tarjeta de Visitante por Razones Humanitarias",
+  "Solicitud ante COMAR",
+  "Ensayo de entrevistas",
+  "Amparo para entrevista",
+  "Amparo general",
+  "Amparo TVRH",
+  "Regularización Migratoria",
+  "Asesoría Corporativa Mensual",
+  "Juicio Contencioso",
+];
+const expenseCategories = ["Operación", "Marketing", "Transporte", "Servicios", "Impuestos", "Otros"];
+const todayInput = () => new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const toDatabaseDate = (value: string) => `${value}T12:00:00.000Z`;
+const toInputDate = (value: string) => new Date(value).toISOString().slice(0, 10);
+const sameMonth = (value: string, reference = new Date()) => {
+  const date = new Date(value);
+  return date.getUTCFullYear() === reference.getFullYear() && date.getUTCMonth() === reference.getMonth();
+};
 
 async function imageAsDataUrl(src: string) {
   const blob = await fetch(src).then((response) => {
@@ -36,6 +58,14 @@ async function imageAsDataUrl(src: string) {
   });
 }
 
+function clippedLines(pdf: jsPDF, text: string, width: number, maxLines: number) {
+  const all = pdf.splitTextToSize(text, width) as string[];
+  if (all.length <= maxLines) return all;
+  const visible = all.slice(0, maxLines);
+  visible[maxLines - 1] = `${visible[maxLines - 1].replace(/[.…]+$/, "")}…`;
+  return visible;
+}
+
 export default function HomePage() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -43,6 +73,7 @@ export default function HomePage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [trash, setTrash] = useState<TrashItem[]>([]);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [isOnline, setIsOnline] = useState(true);
@@ -50,6 +81,7 @@ export default function HomePage() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [clientOpen, setClientOpen] = useState(false);
   const [expenseOpen, setExpenseOpen] = useState(false);
+  const [paymentFor, setPaymentFor] = useState<Document | null>(null);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [editingDocument, setEditingDocument] = useState<Document | null>(null);
   const [editingMovement, setEditingMovement] = useState<Movement | null>(null);
@@ -57,14 +89,21 @@ export default function HomePage() {
   const [detail, setDetail] = useState<Document | null>(null);
   const [toast, setToast] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
   const refreshData = useCallback(async () => {
     const data = await loadFinanceData();
-    setClients(data.clients); setDocuments(data.documents); setMovements(data.movements);
+    setClients(data.clients);
+    setDocuments(data.documents);
+    setMovements(data.movements);
+    setPartners(data.partners);
+    return data;
   }, []);
   const refreshTrash = useCallback(async () => {
     const [trashItems, auditEntries] = await Promise.all([loadTrashData(), loadAuditLog()]);
-    setTrash(trashItems); setAuditLog(auditEntries);
+    setTrash(trashItems);
+    setAuditLog(auditEntries);
   }, []);
+
   useEffect(() => {
     getSession().then(setSession).catch(() => setSession(null)).finally(() => setAuthReady(true));
     setIsOnline(navigator.onLine);
@@ -76,7 +115,10 @@ export default function HomePage() {
       const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
       navigator.serviceWorker.register(`${basePath}/sw.js`).catch(() => undefined);
     }
-    return () => { window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline) };
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
   }, []);
   useEffect(() => {
     if (!session) return;
@@ -84,179 +126,409 @@ export default function HomePage() {
     const interval = window.setInterval(() => refreshData().catch(() => undefined), 30000);
     const onFocus = () => refreshData().catch(() => undefined);
     window.addEventListener("focus", onFocus);
-    return () => { window.clearInterval(interval); window.removeEventListener("focus", onFocus) };
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [session, refreshData]);
   useEffect(() => {
     if (!session || tab !== "papelera") return;
     refreshTrash().catch((error) => setToast(error instanceof Error ? error.message : "No fue posible abrir la papelera"));
   }, [session, tab, refreshTrash]);
-  const totals = useMemo(() => ({
-    income: documents.filter((d) => d.status === "Pagado").reduce((sum, d) => sum + d.amount, 0),
-    pending: documents.filter((d) => d.status === "Pendiente" || d.status === "Vencido").reduce((sum, d) => sum + d.amount, 0),
-    quoted: documents.filter((d) => d.kind === "Presupuesto").reduce((sum, d) => sum + d.amount, 0),
-    expenses: movements.filter((m) => m.type === "Gasto").reduce((sum, m) => sum + m.amount, 0),
-  }), [documents, movements]);
-  const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600) };
+
+  const totals = useMemo<DashboardTotals>(() => {
+    const currentDocuments = documents.filter((document) => sameMonth(document.issuedAt));
+    const currentMovements = movements.filter((movement) => sameMonth(movement.occurredAt));
+    return {
+      income: currentMovements.filter((movement) => movement.type === "Ingreso").reduce((sum, movement) => sum + movement.amount, 0),
+      pending: currentDocuments.reduce((sum, document) => sum + document.balance, 0),
+      quoted: currentDocuments.filter((document) => document.kind === "Presupuesto").reduce((sum, document) => sum + document.amount, 0),
+      expenses: currentMovements.filter((movement) => movement.type === "Gasto").reduce((sum, movement) => sum + movement.amount, 0),
+    };
+  }, [documents, movements]);
+  const currentPartner = partners.find((partner) => partner.email.toLowerCase() === session?.user.email?.toLowerCase())?.name ?? "";
+  const notify = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2800);
+  };
+
   const addClient = async (client: Omit<Client, "id" | "total" | "updatedAt">) => {
     const normalized = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
     const duplicate = clients.find((item) => normalized(item.name) === normalized(client.name) || Boolean(client.email && normalized(item.email) === normalized(client.email)));
-    if (duplicate) { notify(`Ya existe un cliente parecido: ${duplicate.name}`); return }
+    if (duplicate) { notify(`Ya existe un cliente parecido: ${duplicate.name}`); return; }
     setIsSaving(true);
     try {
-      const saved = await createClient(client); setClients((current) => [saved, ...current]);
-      setClientOpen(false); notify("Cliente guardado correctamente");
-    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible guardar el cliente") }
-    finally { setIsSaving(false) }
+      const saved = await createClient(client);
+      setClients((current) => [saved, ...current]);
+      setClientOpen(false);
+      notify("Cliente guardado correctamente");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible guardar el cliente"); }
+    finally { setIsSaving(false); }
   };
   const addDocument = async (draft: NewDocumentInput) => {
     setIsSaving(true);
     try {
-      const next = await createDocument(draft); await refreshData(); setComposerOpen(false); setDetail(next); notify(`${draft.kind} creado correctamente`);
-    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible crear el documento") }
-    finally { setIsSaving(false) }
+      const next = await createDocument(draft);
+      const data = await refreshData();
+      setComposerOpen(false);
+      setDetail(data.documents.find((document) => document.id === next.id) ?? next);
+      notify(`${draft.kind} creado correctamente`);
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible crear el documento"); }
+    finally { setIsSaving(false); }
   };
-  const addExpense = async (draft: Omit<Movement, "id" | "type" | "occurredAt" | "updatedAt">) => {
+  const addExpense = async (draft: NewExpenseInput) => {
     setIsSaving(true);
     try {
-      const next = await createExpense(draft); setMovements((current) => [next, ...current]); setExpenseOpen(false); notify("Gasto registrado correctamente");
-    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible guardar el gasto") }
-    finally { setIsSaving(false) }
+      await createExpense(draft);
+      await refreshData();
+      setExpenseOpen(false);
+      notify("Gasto registrado correctamente");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible guardar el gasto"); }
+    finally { setIsSaving(false); }
+  };
+  const addPayment = async (draft: NewPaymentInput) => {
+    setIsSaving(true);
+    try {
+      await createDocumentPayment(draft);
+      const data = await refreshData();
+      const updated = data.documents.find((document) => document.id === draft.documentId) ?? null;
+      setDetail(updated);
+      setPaymentFor(null);
+      notify("Abono registrado correctamente");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible registrar el abono"); }
+    finally { setIsSaving(false); }
   };
   const saveClientEdit = async (updated: Client) => {
     setIsSaving(true);
-    try { const saved = await updateClient(updated); setClients((current) => current.map((item) => item.id === saved.id ? saved : item)); setEditingClient(null); notify("Cliente actualizado") }
-    catch (error) { notify(error instanceof Error ? error.message : "No fue posible editar el cliente") }
-    finally { setIsSaving(false) }
+    try {
+      const saved = await updateClient(updated);
+      setClients((current) => current.map((item) => item.id === saved.id ? saved : item));
+      setEditingClient(null);
+      notify("Cliente actualizado");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible editar el cliente"); }
+    finally { setIsSaving(false); }
   };
   const saveDocumentEdit = async (updated: Document) => {
     setIsSaving(true);
     try {
-      const saved = await updateDocument(updated);
-      await refreshData(); setEditingDocument(null); setDetail(saved); notify("Documento actualizado");
-    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible editar el documento") }
-    finally { setIsSaving(false) }
+      await updateDocument(updated);
+      const data = await refreshData();
+      setEditingDocument(null);
+      setDetail(data.documents.find((document) => document.id === updated.id) ?? null);
+      notify("Documento actualizado");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible editar el documento"); }
+    finally { setIsSaving(false); }
   };
   const saveMovementEdit = async (updated: Movement) => {
     setIsSaving(true);
-    try { const saved = await updateExpense(updated); setMovements((current) => current.map((item) => item.id === saved.id ? saved : item)); setEditingMovement(null); notify("Gasto actualizado") }
-    catch (error) { notify(error instanceof Error ? error.message : "No fue posible editar el movimiento") }
-    finally { setIsSaving(false) }
+    try {
+      await updateExpense(updated);
+      await refreshData();
+      setEditingMovement(null);
+      notify("Gasto actualizado");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible editar el gasto"); }
+    finally { setIsSaving(false); }
   };
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setIsSaving(true);
     try {
       await setRecordTrashed({ entity: deleteTarget.type, id: deleteTarget.id, updatedAt: deleteTarget.updatedAt }, true);
-      await Promise.all([refreshData(), refreshTrash()]);
+      const [data] = await Promise.all([refreshData(), refreshTrash()]);
       if (deleteTarget.type === "document") setDetail(null);
-      setDeleteTarget(null); notify("Registro enviado a la papelera");
-    } catch (error) { setDeleteTarget(null); notify(error instanceof Error ? error.message : "No fue posible enviar a la papelera") }
-    finally { setIsSaving(false) }
+      else if (detail) setDetail(data.documents.find((document) => document.id === detail.id) ?? null);
+      setDeleteTarget(null);
+      notify("Registro enviado a la papelera");
+    } catch (error) { setDeleteTarget(null); notify(error instanceof Error ? error.message : "No fue posible enviar a la papelera"); }
+    finally { setIsSaving(false); }
   };
   const restoreRecord = async (item: TrashItem) => {
     setIsSaving(true);
-    try { await setRecordTrashed(item, false); await Promise.all([refreshData(), refreshTrash()]); notify("Registro restaurado") }
-    catch (error) { notify(error instanceof Error ? error.message : "No fue posible restaurar el registro") }
-    finally { setIsSaving(false) }
+    try {
+      await setRecordTrashed(item, false);
+      await Promise.all([refreshData(), refreshTrash()]);
+      notify("Registro restaurado");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible restaurar el registro"); }
+    finally { setIsSaving(false); }
   };
   const handlePaid = async () => {
     if (!detail) return;
     setIsSaving(true);
-    try { const paid = await markDocumentPaid(detail); await refreshData(); setDetail(paid); notify("Pago registrado") }
-    catch (error) { notify(error instanceof Error ? error.message : "No fue posible registrar el pago") }
-    finally { setIsSaving(false) }
+    try {
+      await markDocumentPaid(detail);
+      const data = await refreshData();
+      setDetail(data.documents.find((document) => document.id === detail.id) ?? null);
+      notify("Saldo liquidado");
+    } catch (error) { notify(error instanceof Error ? error.message : "No fue posible liquidar el saldo"); }
+    finally { setIsSaving(false); }
   };
+
   const generatePdf = async (doc: Document, share = false) => {
-    const pdf = new jsPDF({ unit: "mm", format: "letter" }); const blue: [number, number, number] = [15, 48, 87]; const gold: [number, number, number] = [184, 139, 55];
-    pdf.setFillColor(255,255,255); pdf.rect(0, 0, 216, 45, "F");
-    try { pdf.addImage(await imageAsDataUrl(brandLogoSrc), "PNG", 8, 3, 125, 42) } catch { pdf.setTextColor(...blue); pdf.setFont("helvetica", "bold"); pdf.setFontSize(19); pdf.text("FERNÁNDEZ CONDE", 18, 19) }
-    pdf.setTextColor(...blue); pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); pdf.text(doc.kind.toUpperCase(), 198, 18, { align: "right" }); pdf.setTextColor(95,102,110); pdf.setFontSize(9); pdf.text(doc.folio, 198, 27, { align: "right" }); pdf.setDrawColor(...gold); pdf.setLineWidth(.6); pdf.line(18,45,198,45);
-    pdf.setTextColor(40,47,55); pdf.setFont("helvetica", "normal"); pdf.text("EMITIDO PARA", 18, 56); pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); const clientLines = pdf.splitTextToSize(doc.client, 118).slice(0,2); pdf.text(clientLines, 18, 65); pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.text(`Fecha: ${doc.date}`, 198, 56, { align: "right" }); pdf.text("Moneda: MXN", 198, 63, { align: "right" });
-    pdf.setDrawColor(220,224,229); pdf.line(18,78,198,78); pdf.setFont("helvetica", "bold"); pdf.setFillColor(245,247,250); pdf.rect(18,82,180,12,"F"); pdf.text("CONCEPTO",23,90); pdf.text("IMPORTE",191,90,{align:"right"}); pdf.setFont("helvetica","normal"); const conceptLines = pdf.splitTextToSize(doc.concept, 125).slice(0,3); pdf.text(conceptLines,23,106); pdf.text(money.format(doc.amount),191,106,{align:"right"}); const detailBottom = 116 + Math.max(0, conceptLines.length - 1) * 4; pdf.line(18,detailBottom,198,detailBottom); const totalY = detailBottom + 14; pdf.setFont("helvetica","bold"); pdf.setFontSize(12); pdf.text("TOTAL",145,totalY); pdf.setTextColor(...blue); pdf.setFontSize(16); pdf.text(money.format(doc.amount),198,totalY,{align:"right"});
-    const noteY = totalY + 20; pdf.setTextColor(75,82,90); pdf.setFont("helvetica","normal"); pdf.setFontSize(8.5); if (doc.notes.trim()) { pdf.setFont("helvetica","bold"); pdf.text("NOTAS",18,noteY); pdf.setFont("helvetica","normal"); pdf.text(pdf.splitTextToSize(doc.notes,180).slice(0,5),18,noteY+6) } pdf.text("El presente documento no constituye un CFDI.",18,220); pdf.text("Gracias por confiar en Fernández Conde, S.C.",18,227); pdf.setDrawColor(...gold); pdf.setLineWidth(1); pdf.line(18,244,198,244); pdf.setTextColor(95,102,110); pdf.text("contacto@fernandezconde.mx  ·  Ciudad de México",108,253,{align:"center"});
-    const filename = `${doc.folio}-${doc.client.replace(/\s+/g,"-")}.pdf`;
+    const payments = movements.filter((movement) => movement.type === "Ingreso" && movement.documentId === doc.id);
+    const pdf = new jsPDF({ unit: "mm", format: "letter" });
+    const blue: [number, number, number] = [15, 48, 87];
+    const gold: [number, number, number] = [184, 139, 55];
+    pdf.setFillColor(255, 255, 255); pdf.rect(0, 0, 216, 45, "F");
+    try { pdf.addImage(await imageAsDataUrl(brandLogoSrc), "PNG", 8, 3, 125, 42); }
+    catch { pdf.setTextColor(...blue); pdf.setFont("helvetica", "bold"); pdf.setFontSize(19); pdf.text("FERNÁNDEZ CONDE", 18, 19); }
+    pdf.setTextColor(...blue); pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); pdf.text(doc.kind.toUpperCase(), 198, 18, { align: "right" });
+    pdf.setTextColor(95, 102, 110); pdf.setFontSize(9); pdf.text(doc.folio, 198, 27, { align: "right" });
+    pdf.setDrawColor(...gold); pdf.setLineWidth(.6); pdf.line(18, 45, 198, 45);
+    pdf.setTextColor(40, 47, 55); pdf.setFont("helvetica", "normal"); pdf.text("EMITIDO PARA", 18, 56);
+    pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); pdf.text(clippedLines(pdf, doc.client, 118, 2), 18, 65);
+    pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.text(`Fecha: ${doc.date}`, 198, 56, { align: "right" }); pdf.text("Moneda: MXN", 198, 63, { align: "right" });
+    pdf.setDrawColor(220, 224, 229); pdf.line(18, 78, 198, 78); pdf.setFont("helvetica", "bold"); pdf.setFillColor(245, 247, 250); pdf.rect(18, 82, 180, 12, "F"); pdf.text("CONCEPTO", 23, 90); pdf.text("IMPORTE", 191, 90, { align: "right" });
+    pdf.setFont("helvetica", "normal"); const conceptLines = clippedLines(pdf, doc.concept, 125, 3); pdf.text(conceptLines, 23, 106); pdf.text(money.format(doc.amount), 191, 106, { align: "right" });
+    const detailBottom = 116 + Math.max(0, conceptLines.length - 1) * 4; pdf.line(18, detailBottom, 198, detailBottom);
+    let cursor = detailBottom + 13;
+    pdf.setFont("helvetica", "bold"); pdf.text("TOTAL", 145, cursor); pdf.setTextColor(...blue); pdf.setFontSize(13); pdf.text(money.format(doc.amount), 198, cursor, { align: "right" });
+    cursor += 8; pdf.setFontSize(9); pdf.setTextColor(75, 82, 90); pdf.text("PAGADO", 145, cursor); pdf.text(money.format(doc.paidAmount), 198, cursor, { align: "right" });
+    cursor += 7; pdf.text("SALDO", 145, cursor); pdf.setTextColor(...blue); pdf.text(money.format(doc.balance), 198, cursor, { align: "right" });
+    if (payments.length) {
+      cursor += 13; pdf.setTextColor(75, 82, 90); pdf.setFont("helvetica", "bold"); pdf.text("DESGLOSE DE PAGOS", 18, cursor);
+      pdf.setFont("helvetica", "normal");
+      for (const payment of payments.slice(0, 6)) {
+        cursor += 6; pdf.text(`${formatDate(payment.occurredAt)}${payment.note ? ` · ${payment.note}` : ""}`, 18, cursor); pdf.text(money.format(payment.amount), 198, cursor, { align: "right" });
+      }
+      if (payments.length > 6) { cursor += 6; pdf.text(`… y ${payments.length - 6} pago(s) adicional(es)`, 18, cursor); }
+    }
+    if (doc.notes.trim()) {
+      cursor += 13; pdf.setFont("helvetica", "bold"); pdf.text("NOTAS", 18, cursor); pdf.setFont("helvetica", "normal"); pdf.text(clippedLines(pdf, doc.notes, 180, 5), 18, cursor + 6);
+    }
+    pdf.setTextColor(75, 82, 90); pdf.setFont("helvetica", "normal"); pdf.setFontSize(8.5); pdf.text("El presente documento no constituye un CFDI.", 18, 220); pdf.text("Gracias por confiar en Fernández Conde, S.C.", 18, 227);
+    pdf.setDrawColor(...gold); pdf.setLineWidth(1); pdf.line(18, 244, 198, 244); pdf.setTextColor(95, 102, 110); pdf.text("contacto@fernandezconde.mx  ·  Ciudad de México", 108, 253, { align: "center" });
+    const filename = `${doc.folio}-${doc.client.replace(/\s+/g, "-")}.pdf`;
     if (share && navigator.share) {
       const file = new File([pdf.output("blob")], filename, { type: "application/pdf" });
       if (!navigator.canShare || navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({ title: `${doc.kind} ${doc.folio}`, text: `Documento de Fernández Conde, S.C. por ${money.format(doc.amount)}`, files: [file] });
-          notify("Documento compartido");
-          return;
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") { notify("Compartir cancelado"); return }
-        }
+          notify("Documento compartido"); return;
+        } catch (error) { if (error instanceof DOMException && error.name === "AbortError") { notify("Compartir cancelado"); return; } }
       }
     }
     pdf.save(filename); notify(share ? "PDF descargado para compartir" : "PDF descargado");
   };
+
   if (!authReady) return <LoadingScreen />;
   if (!isSupabaseConfigured) return <SetupScreen />;
   if (!session) return <LoginScreen onSignedIn={setSession} />;
+  const detailPayments = detail ? movements.filter((movement) => movement.type === "Ingreso" && movement.documentId === detail.id) : [];
+
   return <main className="app-shell">
-    <aside className="sidebar"><div className="sidebar-logo-wrap"><img src={brandLogoSrc} alt="Fernández Conde, S.C." /></div><nav><NavItem active={tab === "inicio"} icon={<Home />} label="Inicio" onClick={() => setTab("inicio")} /><NavItem active={tab === "documentos"} icon={<FileText />} label="Documentos" onClick={() => setTab("documentos")} /><NavItem active={tab === "clientes"} icon={<Users />} label="Clientes" onClick={() => setTab("clientes")} /><NavItem active={tab === "movimientos"} icon={<WalletCards />} label="Movimientos" onClick={() => setTab("movimientos")} /><NavItem active={tab === "informes"} icon={<BarChart3 />} label="Informes" onClick={() => setTab("informes")} /><NavItem active={tab === "papelera"} icon={<Trash2 />} label="Papelera" onClick={() => setTab("papelera")} /></nav><div className="firm-pill"><span className="avatar">FC</span><div><strong>Socio conectado</strong><small>{session.user.email}</small></div><button className="session-exit" aria-label="Cerrar sesión" onClick={() => { void signOut().finally(() => setSession(null)) }}><LogOut /></button></div></aside>
-    <section className="workspace"><header className="topbar"><button className="mobile-menu" aria-label="Menú"><Menu /></button><div><p className="eyebrow">FERNÁNDEZ CONDE, S.C.</p><h1>{titleFor(tab)}</h1></div><button className="primary compact" onClick={() => setComposerOpen(true)}><Plus /> Nuevo documento</button></header>
+    <aside className="sidebar">
+      <div className="sidebar-logo-wrap"><img src={brandLogoSrc} alt="Fernández Conde, S.C." /></div>
+      <nav><NavItem active={tab === "inicio"} icon={<Home />} label="Inicio" onClick={() => setTab("inicio")} /><NavItem active={tab === "documentos"} icon={<FileText />} label="Documentos" onClick={() => setTab("documentos")} /><NavItem active={tab === "clientes"} icon={<Users />} label="Clientes" onClick={() => setTab("clientes")} /><NavItem active={tab === "movimientos"} icon={<WalletCards />} label="Movimientos" onClick={() => setTab("movimientos")} /><NavItem active={tab === "informes"} icon={<BarChart3 />} label="Informes" onClick={() => setTab("informes")} /><NavItem active={tab === "papelera"} icon={<Trash2 />} label="Papelera" onClick={() => setTab("papelera")} /></nav>
+      <div className="firm-pill"><span className="avatar">FC</span><div><strong>Socio conectado</strong><small>{session.user.email}</small></div><button className="session-exit" aria-label="Cerrar sesión" onClick={() => { void signOut().catch(() => undefined).finally(() => setSession(null)); }}><LogOut /></button></div>
+    </aside>
+    <section className="workspace">
+      <header className="topbar"><div><p className="eyebrow">FERNÁNDEZ CONDE, S.C.</p><h1>{titleFor(tab)}</h1></div><button className="primary compact" onClick={() => setComposerOpen(true)}><Plus /> Nuevo documento</button></header>
       {!isOnline && <div className="offline-banner"><WifiOff /> Sin conexión. Puedes consultar la pantalla, pero no guardar cambios.</div>}
       {tab === "inicio" && <Dashboard totals={totals} documents={documents} setTab={setTab} openDocument={setDetail} openComposer={() => setComposerOpen(true)} />}
       {tab === "documentos" && <DocumentsView documents={documents} query={query} setQuery={setQuery} openDocument={setDetail} openComposer={() => setComposerOpen(true)} />}
       {tab === "clientes" && <ClientsView clients={clients} query={query} setQuery={setQuery} openClient={() => setClientOpen(true)} onEdit={setEditingClient} onDelete={(client) => setDeleteTarget({ type: "client", id: client.id, label: client.name, updatedAt: client.updatedAt })} />}
       {tab === "movimientos" && <MovementsView movements={movements} openExpense={() => setExpenseOpen(true)} onEdit={setEditingMovement} onDelete={(movement) => setDeleteTarget({ type: "movement", id: movement.id, label: movement.description, updatedAt: movement.updatedAt })} />}
-      {tab === "informes" && <ReportsView documents={documents} totals={totals} />}
+      {tab === "informes" && <ReportsView documents={documents} movements={movements} clients={clients} />}
       {tab === "papelera" && <TrashView items={trash} auditLog={auditLog} saving={isSaving} onRestore={restoreRecord} />}
     </section>
     <nav className="bottom-nav"><NavItem active={tab === "inicio"} icon={<Home />} label="Inicio" onClick={() => setTab("inicio")} /><NavItem active={tab === "documentos"} icon={<FileText />} label="Docs" onClick={() => setTab("documentos")} /><button className="mobile-create" onClick={() => setComposerOpen(true)} aria-label="Nuevo documento"><Plus /></button><NavItem active={tab === "clientes"} icon={<Users />} label="Clientes" onClick={() => setTab("clientes")} /><NavItem active={tab === "movimientos"} icon={<WalletCards />} label="Gastos" onClick={() => setTab("movimientos")} /><NavItem active={tab === "informes"} icon={<BarChart3 />} label="Informes" onClick={() => setTab("informes")} /><NavItem active={tab === "papelera"} icon={<Trash2 />} label="Papelera" onClick={() => setTab("papelera")} /></nav>
     {composerOpen && <DocumentComposer clients={clients} saving={isSaving} onClose={() => setComposerOpen(false)} onSave={addDocument} />}
     {clientOpen && <ClientComposer saving={isSaving} onClose={() => setClientOpen(false)} onSave={addClient} />}
-    {expenseOpen && <ExpenseComposer saving={isSaving} onClose={() => setExpenseOpen(false)} onSave={addExpense} />}
+    {expenseOpen && <ExpenseComposer partners={partners} defaultSpentBy={currentPartner} saving={isSaving} onClose={() => setExpenseOpen(false)} onSave={addExpense} />}
+    {paymentFor && <PaymentComposer document={paymentFor} saving={isSaving} onClose={() => setPaymentFor(null)} onSave={addPayment} />}
     {editingClient && <ClientEditor client={editingClient} saving={isSaving} onClose={() => setEditingClient(null)} onSave={saveClientEdit} />}
     {editingDocument && <DocumentEditor document={editingDocument} clients={clients} saving={isSaving} onClose={() => setEditingDocument(null)} onSave={saveDocumentEdit} />}
-    {editingMovement && <ExpenseEditor movement={editingMovement} saving={isSaving} onClose={() => setEditingMovement(null)} onSave={saveMovementEdit} />}
+    {editingMovement && <ExpenseEditor movement={editingMovement} partners={partners} saving={isSaving} onClose={() => setEditingMovement(null)} onSave={saveMovementEdit} />}
     {deleteTarget && <DeleteConfirm target={deleteTarget} saving={isSaving} onClose={() => setDeleteTarget(null)} onConfirm={confirmDelete} />}
-    {detail && <DocumentDetail doc={detail} onClose={() => setDetail(null)} onPdf={() => generatePdf(detail)} onShare={() => generatePdf(detail, true)} onEdit={() => { setEditingDocument(detail); setDetail(null) }} onDelete={() => setDeleteTarget({ type: "document", id: detail.id, label: detail.folio, updatedAt: detail.updatedAt })} onPaid={handlePaid} />}
+    {detail && <DocumentDetail doc={detail} payments={detailPayments} onClose={() => setDetail(null)} onPdf={() => generatePdf(detail)} onShare={() => generatePdf(detail, true)} onEdit={() => { setEditingDocument(detail); setDetail(null); }} onDelete={() => setDeleteTarget({ type: "document", id: detail.id, label: detail.folio, updatedAt: detail.updatedAt })} onPayment={() => setPaymentFor(detail)} onDeletePayment={(payment) => setDeleteTarget({ type: "movement", id: payment.id, label: `pago de ${money.format(payment.amount)}`, updatedAt: payment.updatedAt })} onPaid={handlePaid} />}
     {toast && <div className="toast"><Check /> {toast}</div>}
   </main>;
 }
 
-function LoadingScreen() { return <main className="auth-screen"><div className="auth-card"><img className="auth-brand-logo" src={brandLogoSrc} alt="Fernández Conde, S.C." /><p>Abriendo control financiero…</p></div></main> }
-function SetupScreen() { return <main className="auth-screen"><div className="auth-card"><img className="auth-brand-logo" src={brandLogoSrc} alt="Fernández Conde, S.C." /><p className="eyebrow">CONFIGURACIÓN PENDIENTE</p><h1>Falta conectar la base compartida</h1><p>Agrega las variables de Supabase al repositorio para habilitar el acceso de los dos socios.</p></div></main> }
+function LoadingScreen() { return <main className="auth-screen"><div className="auth-card"><img className="auth-brand-logo" src={brandLogoSrc} alt="Fernández Conde, S.C." /><p>Abriendo control financiero…</p></div></main>; }
+function SetupScreen() { return <main className="auth-screen"><div className="auth-card"><img className="auth-brand-logo" src={brandLogoSrc} alt="Fernández Conde, S.C." /><p className="eyebrow">CONFIGURACIÓN PENDIENTE</p><h1>Falta conectar la base compartida</h1><p>Agrega las variables de Supabase al repositorio para habilitar el acceso de los dos socios.</p></div></main>; }
 function LoginScreen({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
-  const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [error,setError]=useState(""); const [loading,setLoading]=useState(false);
-  return <main className="auth-screen"><form className="auth-card" onSubmit={async(e)=>{e.preventDefault();setLoading(true);setError("");try{onSignedIn(await signIn(email,password))}catch(err){setError(err instanceof Error?err.message:"No fue posible iniciar sesión")}finally{setLoading(false)}}}><img className="auth-brand-logo" src={brandLogoSrc} alt="Fernández Conde, S.C." /><p className="eyebrow">ACCESO PARA SOCIOS</p><h1>Control financiero</h1><p>Acceso exclusivo para socios autorizados.</p><label>Correo electrónico<input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} autoComplete="email" required /></label><label>Contraseña<input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} autoComplete="current-password" required /></label>{error&&<div className="auth-error">{error}</div>}<button className="primary" disabled={loading}>{loading?"Ingresando…":"Iniciar sesión"}</button></form></main>
+  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState(""); const [loading, setLoading] = useState(false);
+  return <main className="auth-screen"><form className="auth-card" onSubmit={async (event) => { event.preventDefault(); setLoading(true); setError(""); try { onSignedIn(await signIn(email, password)); } catch (caught) { setError(caught instanceof Error ? caught.message : "No fue posible iniciar sesión"); } finally { setLoading(false); } }}><img className="auth-brand-logo" src={brandLogoSrc} alt="Fernández Conde, S.C." /><p className="eyebrow">ACCESO PARA SOCIOS</p><h1>Control financiero</h1><p>Acceso exclusivo para socios autorizados.</p><label>Correo electrónico<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{error && <div className="auth-error">{error}</div>}<button className="primary" disabled={loading}>{loading ? "Ingresando…" : "Iniciar sesión"}</button></form></main>;
 }
 
-function titleFor(tab: Tab) { return { inicio: "Resumen", documentos: "Documentos", clientes: "Clientes", movimientos: "Movimientos", informes: "Informes", papelera: "Papelera y bitácora" }[tab] }
-function NavItem({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) { return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span></button> }
-function Dashboard({ totals, documents, setTab, openDocument, openComposer }: { totals: { income: number; pending: number; quoted: number; expenses: number }; documents: Document[]; setTab: (tab: Tab) => void; openDocument: (doc: Document) => void; openComposer: () => void }) { return <div className="page-content"><section className="welcome-row"><div><h2>Buenas noches, Óscar.</h2><p>Éste es el estado de la firma durante agosto.</p></div><button className="text-button"><CalendarDays /> Agosto 2026</button></section><section className="stats-grid"><StatCard label="Ingresos cobrados" value={totals.income} icon={<ArrowUpRight />} trend="Cobros registrados" tone="green" /><StatCard label="Por cobrar" value={totals.pending} icon={<Clock3 />} trend="Documentos pendientes" tone="amber" /><StatCard label="Presupuestado" value={totals.quoted} icon={<FileCheck2 />} trend="Propuestas emitidas" tone="blue" /><StatCard label="Balance del mes" value={totals.income - totals.expenses} icon={<TrendingUp />} trend="Después de gastos" tone="navy" /></section><section className="main-grid"><article className="panel activity-panel"><div className="panel-heading"><div><p className="eyebrow">ACTIVIDAD</p><h3>Documentos recientes</h3></div><button className="text-link" onClick={() => setTab("documentos")}>Ver todos <ChevronRight /></button></div><div className="document-list">{documents.slice(0,4).map((doc) => <DocumentRow key={doc.id} doc={doc} onClick={() => openDocument(doc)} />)}{documents.length === 0 && <EmptyState title="Aún no hay documentos" text="Crea tu primer presupuesto o recibo." />}</div></article><article className="panel quick-panel"><p className="eyebrow">ACCESOS RÁPIDOS</p><h3>¿Qué necesitas crear?</h3><button className="quick-action" onClick={openComposer}><span className="quick-icon blue"><FilePlus2 /></span><span><strong>Presupuesto</strong><small>Envía una propuesta formal</small></span><ChevronRight /></button><button className="quick-action" onClick={openComposer}><span className="quick-icon gold"><ReceiptText /></span><span><strong>Recibo</strong><small>Confirma un pago recibido</small></span><ChevronRight /></button><button className="quick-action" onClick={openComposer}><span className="quick-icon green"><CircleDollarSign /></span><span><strong>Cuenta de cobro</strong><small>Registra un saldo pendiente</small></span><ChevronRight /></button></article></section></div> }
-function StatCard({ label, value, icon, trend, tone }: { label: string; value: number; icon: React.ReactNode; trend: string; tone: string }) { return <article className={`stat-card ${tone}`}><div className="stat-top"><span>{label}</span><span className="stat-icon">{icon}</span></div><strong>{money.format(value)}</strong><small>{trend}</small></article> }
-function DocumentRow({ doc, onClick }: { doc: Document; onClick: () => void }) { return <button className="document-row" onClick={onClick}><span className="file-icon"><FileText /></span><span className="document-main"><strong>{doc.client}</strong><small>{doc.folio} · {doc.concept}</small></span><span className="document-amount"><strong>{money.format(doc.amount)}</strong><StatusPill status={doc.status} /></span><ChevronRight className="chevron" /></button> }
-function StatusPill({ status }: { status: Status }) { return <span className={`status ${status.toLowerCase().replace(" ", "-")}`}>{status}</span> }
-function DocumentsView({ documents, query, setQuery, openDocument, openComposer }: { documents: Document[]; query: string; setQuery: (value: string) => void; openDocument: (doc: Document) => void; openComposer: () => void }) { const [filter,setFilter] = useState("Todos"); const visible = documents.filter((doc) => (filter === "Todos" || doc.kind === filter) && `${doc.client} ${doc.folio} ${doc.concept}`.toLowerCase().includes(query.toLowerCase())); return <div className="page-content"><div className="section-tools"><label className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por cliente, folio o concepto" /></label><button className="primary" onClick={openComposer}><Plus /> Crear documento</button></div><div className="filter-row">{["Todos","Presupuesto","Recibo","Cuenta de cobro"].map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div><article className="panel"><div className="table-head"><span>Documento</span><span>Cliente y concepto</span><span>Fecha</span><span>Importe</span><span>Estado</span></div>{visible.map((doc) => <DocumentRow key={doc.id} doc={doc} onClick={() => openDocument(doc)} />)}{visible.length === 0 && <EmptyState title="No encontramos documentos" text="Prueba con otra búsqueda o crea uno nuevo." />}</article></div> }
-function ClientsView({ clients, query, setQuery, openClient, onEdit, onDelete }: { clients: Client[]; query: string; setQuery: (value: string) => void; openClient: () => void; onEdit: (client: Client) => void; onDelete: (client: Client) => void }) {
-  const visible = clients.filter((client) => `${client.name} ${client.email}`.toLowerCase().includes(query.toLowerCase()));
+function titleFor(tab: Tab) { return { inicio: "Resumen", documentos: "Documentos", clientes: "Clientes", movimientos: "Movimientos", informes: "Informes", papelera: "Papelera y bitácora" }[tab]; }
+function NavItem({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) { return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span></button>; }
+function monthLabel(date = new Date()) { return new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" }).format(date).replace(/^./, (letter) => letter.toUpperCase()); }
+
+function Dashboard({ totals, documents, setTab, openDocument, openComposer }: { totals: DashboardTotals; documents: Document[]; setTab: (tab: Tab) => void; openDocument: (doc: Document) => void; openComposer: () => void }) {
   return <div className="page-content">
-    <div className="section-tools"><label className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar cliente" /></label><button className="primary" onClick={openClient}><Plus /> Añadir cliente</button></div>
-    <section className="client-grid">{visible.map((client) => <article className="client-card" key={client.id}>
-      <div className="client-top"><span className="avatar large">{client.name.split(" ").slice(0,2).map((word) => word[0]).join("")}</span><div className="row-actions"><button aria-label={`Editar ${client.name}`} onClick={() => onEdit(client)}><Pencil /></button><button className="danger-icon" aria-label={`Eliminar ${client.name}`} onClick={() => onDelete(client)}><Trash2 /></button></div></div>
-      <h3>{client.name}</h3><a href={`mailto:${client.email}`}><Mail /> {client.email || "Sin correo"}</a><a href={`tel:${client.phone}`}><Phone /> {client.phone || "Sin teléfono"}</a><div className="client-total"><span>Total facturado</span><strong>{money.format(client.total)}</strong></div>
-    </article>)}</section>
-  </div>
+    <section className="welcome-row brand-welcome"><img src={brandLogoSrc} alt="Fernández Conde, S.C." /><button className="text-button"><CalendarDays /> {monthLabel()}</button></section>
+    <section className="stats-grid"><StatCard label="Ingresos cobrados" value={totals.income} icon={<ArrowUpRight />} trend="Cobros del mes" tone="green" /><StatCard label="Por cobrar" value={totals.pending} icon={<Clock3 />} trend="Saldos de documentos del mes" tone="amber" /><StatCard label="Presupuestado" value={totals.quoted} icon={<FileCheck2 />} trend="Propuestas del mes" tone="blue" /><StatCard label="Balance del mes" value={totals.income - totals.expenses} icon={<TrendingUp />} trend="Después de gastos" tone="navy" /></section>
+    <section className="main-grid"><article className="panel activity-panel"><div className="panel-heading"><div><p className="eyebrow">ACTIVIDAD</p><h3>Documentos recientes</h3></div><button className="text-link" onClick={() => setTab("documentos")}>Ver todos <ChevronRight /></button></div><div className="document-list">{documents.slice(0, 4).map((doc) => <DocumentRow key={doc.id} doc={doc} onClick={() => openDocument(doc)} />)}{documents.length === 0 && <EmptyState title="Aún no hay documentos" text="Crea tu primer presupuesto o recibo." />}</div></article>
+      <article className="panel quick-panel"><p className="eyebrow">ACCESOS RÁPIDOS</p><h3>¿Qué necesitas crear?</h3><button className="quick-action" onClick={openComposer}><span className="quick-icon blue"><FilePlus2 /></span><span><strong>Presupuesto</strong><small>Envía una propuesta formal</small></span><ChevronRight /></button><button className="quick-action" onClick={openComposer}><span className="quick-icon gold"><ReceiptText /></span><span><strong>Recibo</strong><small>Confirma un pago recibido</small></span><ChevronRight /></button><button className="quick-action" onClick={openComposer}><span className="quick-icon green"><CircleDollarSign /></span><span><strong>Cuenta de cobro</strong><small>Registra un saldo pendiente</small></span><ChevronRight /></button></article>
+    </section>
+  </div>;
 }
+
+function StatCard({ label, value, icon, trend, tone }: { label: string; value: number; icon: React.ReactNode; trend: string; tone: string }) { return <article className={`stat-card ${tone}`}><div className="stat-top"><span>{label}</span><span className="stat-icon">{icon}</span></div><strong>{money.format(value)}</strong><small>{trend}</small></article>; }
+function StatusPill({ status }: { status: Status }) { return <span className={`status ${status.toLowerCase().replace(" ", "-")}`}>{status}</span>; }
+function StagePill({ stage }: { stage: ClientStage }) { return <span className={`status client-${stage.toLowerCase()}`}>{stage}</span>; }
+
+function DocumentRow({ doc, onClick }: { doc: Document; onClick: () => void }) {
+  const paymentLabel = doc.paidAmount > 0 && doc.balance > 0 ? `Abonado ${money.format(doc.paidAmount)}` : doc.concept;
+  return <button className="document-row" onClick={onClick}><span className="file-icon"><FileText /></span><span className="document-main"><strong>{doc.client}</strong><small>{doc.folio} · {paymentLabel}</small></span><span className="document-amount"><strong>{money.format(doc.amount)}</strong><StatusPill status={doc.status} /></span><ChevronRight className="chevron" /></button>;
+}
+
+function DocumentsView({ documents, query, setQuery, openDocument, openComposer }: { documents: Document[]; query: string; setQuery: (value: string) => void; openDocument: (doc: Document) => void; openComposer: () => void }) {
+  const [filter, setFilter] = useState("Todos");
+  const visible = documents.filter((doc) => (filter === "Todos" || doc.kind === filter) && `${doc.client} ${doc.folio} ${doc.concept}`.toLowerCase().includes(query.toLowerCase()));
+  return <div className="page-content"><div className="section-tools"><label className="search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por cliente, folio o concepto" /></label><button className="primary" onClick={openComposer}><Plus /> Crear documento</button></div><div className="filter-row">{["Todos", "Presupuesto", "Recibo", "Cuenta de cobro"].map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div><article className="panel"><div className="table-head"><span>Documento</span><span>Cliente y concepto</span><span>Fecha</span><span>Importe</span><span>Estado</span></div>{visible.map((doc) => <DocumentRow key={doc.id} doc={doc} onClick={() => openDocument(doc)} />)}{visible.length === 0 && <EmptyState title="No encontramos documentos" text="Prueba con otra búsqueda o crea uno nuevo." />}</article></div>;
+}
+
+function ClientsView({ clients, query, setQuery, openClient, onEdit, onDelete }: { clients: Client[]; query: string; setQuery: (value: string) => void; openClient: () => void; onEdit: (client: Client) => void; onDelete: (client: Client) => void }) {
+  const [stage, setStage] = useState<ClientStage | "Todos">("Todos");
+  const visible = clients.filter((client) => (stage === "Todos" || client.stage === stage) && `${client.name} ${client.email}`.toLowerCase().includes(query.toLowerCase()));
+  return <div className="page-content">
+    <div className="section-tools"><label className="search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cliente" /></label><button className="primary" onClick={openClient}><Plus /> Añadir cliente</button></div>
+    <div className="filter-row">{["Todos", "Aceptado", "Pendiente", "Rechazado"].map((item) => <button key={item} className={stage === item ? "selected" : ""} onClick={() => setStage(item as ClientStage | "Todos")}>{item}</button>)}</div>
+    <section className="client-grid">{visible.map((client) => <article className="client-card" key={client.id}><div className="client-top"><span className="avatar large">{client.name.split(" ").slice(0, 2).map((word) => word[0]).join("")}</span><div className="row-actions"><StagePill stage={client.stage} /><button aria-label={`Editar ${client.name}`} onClick={() => onEdit(client)}><Pencil /></button><button className="danger-icon" aria-label={`Eliminar ${client.name}`} onClick={() => onDelete(client)}><Trash2 /></button></div></div><h3>{client.name}</h3><a href={`mailto:${client.email}`}><Mail /> {client.email || "Sin correo"}</a><a href={`tel:${client.phone}`}><Phone /> {client.phone || "Sin teléfono"}</a><div className="client-total"><span>Total cobrado</span><strong>{money.format(client.total)}</strong></div></article>)}</section>
+    {visible.length === 0 && <article className="panel"><EmptyState title="No hay clientes en esta clasificación" text="Cambia el filtro o añade un cliente." /></article>}
+  </div>;
+}
+
 function MovementsView({ movements, openExpense, onEdit, onDelete }: { movements: Movement[]; openExpense: () => void; onEdit: (movement: Movement) => void; onDelete: (movement: Movement) => void }) {
-  const income = movements.filter((m)=>m.type==="Ingreso").reduce((s,m)=>s+m.amount,0); const expenses = movements.filter((m)=>m.type==="Gasto").reduce((s,m)=>s+m.amount,0);
-  return <div className="page-content"><div className="expense-banner"><div><span className="movement-icon expense"><ArrowDownRight /></span><div><strong>Registrar un gasto</strong><small>Renta, marketing, transporte, servicios y más.</small></div></div><button className="primary" onClick={openExpense}><Plus /> Agregar gasto</button></div><section className="stats-grid compact-grid"><StatCard label="Entradas del mes" value={income} icon={<ArrowUpRight />} trend="Pagos registrados" tone="green" /><StatCard label="Gastos del mes" value={expenses} icon={<ArrowDownRight />} trend="Egresos registrados" tone="red" /></section><article className="panel"><div className="panel-heading"><div><p className="eyebrow">AGOSTO 2026</p><h3>Movimientos recientes</h3></div><button className="primary subtle" onClick={openExpense}><Plus /> Registrar gasto</button></div>{movements.map((movement) => <div className="movement editable" key={movement.id}><span className={`movement-icon ${movement.type === "Ingreso" ? "income" : "expense"}`}>{movement.type === "Ingreso" ? <ArrowUpRight /> : <ArrowDownRight />}</span><span><strong>{movement.description}</strong><small>{movement.category} · {movement.occurredAt}</small></span><strong className={movement.type === "Ingreso" ? "positive" : "negative"}>{movement.type === "Ingreso" ? "+" : "−"}{money.format(movement.amount)}</strong>{movement.type === "Gasto" ? <div className="row-actions"><button aria-label={`Editar ${movement.description}`} onClick={() => onEdit(movement)}><Pencil /></button><button className="danger-icon" aria-label={`Eliminar ${movement.description}`} onClick={() => onDelete(movement)}><Trash2 /></button></div> : <small className="linked-note">Desde documento</small>}</div>)}{movements.length === 0 && <EmptyState title="Sin movimientos" text="Los cobros y gastos aparecerán aquí." />}</article></div>
+  const current = movements.filter((movement) => sameMonth(movement.occurredAt));
+  const income = current.filter((movement) => movement.type === "Ingreso").reduce((sum, movement) => sum + movement.amount, 0);
+  const expenses = current.filter((movement) => movement.type === "Gasto").reduce((sum, movement) => sum + movement.amount, 0);
+  return <div className="page-content"><div className="expense-banner"><div><span className="movement-icon expense"><ArrowDownRight /></span><div><strong>Registrar un gasto</strong><small>Identifica quién lo realizó y cuándo ocurrió.</small></div></div><button className="primary" onClick={openExpense}><Plus /> Agregar gasto</button></div><section className="stats-grid compact-grid"><StatCard label="Entradas del mes" value={income} icon={<ArrowUpRight />} trend="Pagos registrados" tone="green" /><StatCard label="Gastos del mes" value={expenses} icon={<ArrowDownRight />} trend="Egresos registrados" tone="red" /></section><article className="panel"><div className="panel-heading"><div><p className="eyebrow">{monthLabel().toUpperCase()}</p><h3>Historial de movimientos</h3></div><button className="primary subtle" onClick={openExpense}><Plus /> Registrar gasto</button></div>{movements.map((movement) => <div className="movement editable" key={movement.id}><span className={`movement-icon ${movement.type === "Ingreso" ? "income" : "expense"}`}>{movement.type === "Ingreso" ? <ArrowUpRight /> : <ArrowDownRight />}</span><span><strong>{movement.description}</strong><small>{movement.category} · {formatDate(movement.occurredAt)}{movement.type === "Gasto" && ` · Gastó: ${movement.spentBy}`}{movement.note && ` · ${movement.note}`}</small></span><strong className={movement.type === "Ingreso" ? "positive" : "negative"}>{movement.type === "Ingreso" ? "+" : "−"}{money.format(movement.amount)}</strong>{movement.type === "Gasto" ? <div className="row-actions"><button aria-label={`Editar ${movement.description}`} onClick={() => onEdit(movement)}><Pencil /></button><button className="danger-icon" aria-label={`Eliminar ${movement.description}`} onClick={() => onDelete(movement)}><Trash2 /></button></div> : <small className="linked-note">Pago de documento</small>}</div>)}{movements.length === 0 && <EmptyState title="Sin movimientos" text="Los cobros y gastos aparecerán aquí." />}</article></div>;
 }
+
 function TrashView({ items, auditLog, saving, onRestore }: { items: TrashItem[]; auditLog: AuditEntry[]; saving: boolean; onRestore: (item: TrashItem) => void }) {
-  const entityName = { client: "Cliente", document: "Documento", movement: "Gasto" };
+  const entityName = { client: "Cliente", document: "Documento", movement: "Movimiento" };
   const actionName = { created: "creó", updated: "actualizó", trashed: "envió a la papelera", restored: "restauró" };
   return <div className="page-content trash-page"><section className="trash-intro"><div><p className="eyebrow">RECUPERACIÓN</p><h2>Nada se elimina definitivamente</h2><p>Los registros enviados aquí dejan de afectar los informes y pueden restaurarse.</p></div><Trash2 /></section><section className="trash-grid"><article className="panel"><div className="panel-heading"><div><p className="eyebrow">PAPELERA</p><h3>Registros eliminados</h3></div><span className="count-pill">{items.length}</span></div><div className="trash-list">{items.map((item) => <div className="trash-row" key={`${item.entity}-${item.id}`}><span className="trash-icon"><Trash2 /></span><span><strong>{item.label}</strong><small>{item.detail} · {item.deletedAt} · {item.deletedBy}</small></span><button className="secondary compact" disabled={saving} onClick={() => onRestore(item)}><RotateCcw /> Restaurar</button></div>)}{items.length === 0 && <EmptyState title="La papelera está vacía" text="Los registros eliminados aparecerán aquí." />}</div></article><article className="panel audit-panel"><div className="panel-heading"><div><p className="eyebrow">BITÁCORA</p><h3>Actividad reciente</h3></div><History /></div><div className="audit-list">{auditLog.map((entry) => <div className="audit-row" key={entry.id}><span className={`audit-dot ${entry.action}`} /><span><strong>{entry.actor} {actionName[entry.action]} un {entityName[entry.entity].toLowerCase()}</strong><small>{entry.occurredAt} · registro #{entry.recordId}</small></span></div>)}{auditLog.length === 0 && <EmptyState title="Sin actividad registrada" text="Los próximos cambios quedarán asentados aquí." />}</div></article></section></div>;
 }
-function ReportsView({ documents, totals }: { documents: Document[]; totals: { income:number; pending:number; quoted:number; expenses:number } }) { const max = Math.max(totals.quoted,totals.income,totals.pending,totals.expenses,1); const average = documents.length ? documents.reduce((s,d) => s+d.amount,0)/documents.length : 0; return <div className="page-content reports"><section className="report-hero"><div><p className="eyebrow">AGOSTO 2026</p><h2>{totals.income - totals.expenses >= 0 ? "La firma mantiene un balance positivo." : "Los gastos superan los cobros del periodo."}</h2><p>Los cobros representan el {Math.round((totals.income/Math.max(totals.income+totals.pending,1))*100)}% del ingreso comprometido.</p></div><div className="balance-orb"><small>Balance</small><strong>{money.format(totals.income-totals.expenses)}</strong><span><TrendingUp /> Actualizado</span></div></section><section className="report-grid"><article className="panel chart-panel"><div className="panel-heading"><div><p className="eyebrow">FINANZAS</p><h3>Ingresos, pendientes y gastos</h3></div></div><div className="bars"><ReportBar label="Cobrado" value={totals.income} max={max} tone="navy" /><ReportBar label="Pendiente" value={totals.pending} max={max} tone="gold" /><ReportBar label="Gastos" value={totals.expenses} max={max} tone="red" /><ReportBar label="Presupuestado" value={totals.quoted} max={max} tone="blue" /></div></article><article className="panel"><p className="eyebrow">INDICADORES</p><h3>Rendimiento comercial</h3><div className="kpi"><span>Presupuestos aceptados</span><strong>{documents.filter((d) => d.status === "Aceptado").length}</strong></div><div className="kpi"><span>Documentos emitidos</span><strong>{documents.length}</strong></div><div className="kpi"><span>Ticket promedio</span><strong>{money.format(average)}</strong></div></article></section></div> }
-function ReportBar({ label, value, max, tone }: { label:string; value:number; max:number; tone:string }) { return <div className="bar-row"><div><span>{label}</span><strong>{money.format(value)}</strong></div><div className="bar-track"><span className={tone} style={{width:`${Math.max((value/max)*100,4)}%`}} /></div></div> }
-function DocumentComposer({ clients, saving, onClose, onSave }: { clients:Client[]; saving:boolean; onClose:()=>void; onSave:(doc:NewDocumentInput)=>void }) { const [kind,setKind]=useState<DocumentKind>("Presupuesto"); const [clientId,setClientId]=useState(clients[0]?.id??0); const [concept,setConcept]=useState(servicePresets[0]); const [amount,setAmount]=useState("8000"); const [notes,setNotes]=useState(""); const [requestId]=useState(()=>crypto.randomUUID()); const selected=clients.find((client)=>client.id===clientId); const submit=(e:React.FormEvent)=>{e.preventDefault(); if(!selected||!concept||Number(amount)<=0)return; onSave({kind,clientId,client:selected.name,concept,amount:Number(amount),status:kind==="Recibo"?"Pagado":"Pendiente",notes,requestId})}; return <div className="overlay"><form className="sheet" onSubmit={submit}><div className="sheet-head"><div><p className="eyebrow">NUEVO DOCUMENTO</p><h2>Crear y enviar</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div>{clients.length === 0 && <div className="empty-note">Primero añade un cliente desde la sección Clientes.</div>}<label>Tipo de documento<select value={kind} onChange={(e)=>setKind(e.target.value as DocumentKind)}><option>Presupuesto</option><option>Recibo</option><option>Cuenta de cobro</option></select></label><label>Cliente<select value={clientId} onChange={(e)=>setClientId(Number(e.target.value))}>{clients.map((client)=><option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Concepto<select value={concept} onChange={(e)=>setConcept(e.target.value)}>{servicePresets.map((service)=><option key={service}>{service}</option>)}</select></label><label>Importe (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(e)=>setAmount(e.target.value)} /></div></label><div className="total-preview"><span>Total</span><strong>{money.format(Number(amount)||0)}</strong></div><label>Notas<textarea value={notes} onChange={(e)=>setNotes(e.target.value)} placeholder="Condiciones de pago, alcance o vigencia del presupuesto…" /></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !selected}><FileCheck2 /> {saving ? "Guardando…" : "Crear documento"}</button></div></form></div> }
-function ClientComposer({ saving, onClose, onSave }: { saving:boolean; onClose:()=>void; onSave:(client:Omit<Client,"id"|"total"|"updatedAt">)=>void }) { const [name,setName]=useState(""); const [email,setEmail]=useState(""); const [phone,setPhone]=useState(""); return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(e)=>{e.preventDefault(); if(name)onSave({name,email,phone})}}><div className="sheet-head"><div><p className="eyebrow">DIRECTORIO</p><h2>Añadir cliente</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Nombre o razón social<input value={name} onChange={(e)=>setName(e.target.value)} placeholder="Nombre completo" autoFocus /></label><label>Correo electrónico<input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} placeholder="correo@ejemplo.com" /></label><label>Teléfono<input value={phone} onChange={(e)=>setPhone(e.target.value)} placeholder="55 0000 0000" /></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !name}><UserRound /> {saving ? "Guardando…" : "Guardar cliente"}</button></div></form></div> }
-function ExpenseComposer({ saving, onClose, onSave }: { saving:boolean; onClose:()=>void; onSave:(movement:Omit<Movement,"id"|"type"|"occurredAt"|"updatedAt">)=>void }) { const [description,setDescription]=useState(""); const [category,setCategory]=useState("Operación"); const [amount,setAmount]=useState(""); return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(e)=>{e.preventDefault(); if(description&&Number(amount)>0)onSave({description,category,amount:Number(amount)})}}><div className="sheet-head"><div><p className="eyebrow">MOVIMIENTO</p><h2>Registrar gasto</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Descripción<input value={description} onChange={(e)=>setDescription(e.target.value)} placeholder="Ej. Publicidad digital" autoFocus /></label><label>Categoría<select value={category} onChange={(e)=>setCategory(e.target.value)}><option>Operación</option><option>Marketing</option><option>Transporte</option><option>Servicios</option><option>Impuestos</option><option>Otros</option></select></label><label>Importe (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(e)=>setAmount(e.target.value)} placeholder="0.00" /></div></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving||!description||Number(amount)<=0}><WalletCards /> {saving?"Guardando…":"Registrar gasto"}</button></div></form></div> }
-function DocumentDetail({ doc,onClose,onPdf,onShare,onEdit,onDelete,onPaid }: { doc:Document; onClose:()=>void; onPdf:()=>void; onShare:()=>void; onEdit:()=>void; onDelete:()=>void; onPaid:()=>void }) { return <div className="overlay"><section className="sheet detail-sheet"><div className="sheet-head"><div><p className="eyebrow">{doc.kind.toUpperCase()}</p><h2>{doc.folio}</h2></div><div className="sheet-head-actions"><button className="icon-button" aria-label="Editar documento" onClick={onEdit}><Pencil /></button><button className="icon-button danger-icon" aria-label="Enviar documento a la papelera" onClick={onDelete}><Trash2 /></button><button className="icon-button" aria-label="Cerrar" onClick={onClose}><X /></button></div></div><div className="detail-status"><StatusPill status={doc.status} /><span>{doc.date}</span></div><div className="preview-card"><div className="preview-brand"><img className="preview-logo" src={brandLogoSrc} alt="Fernández Conde, S.C." /></div><p>EMITIDO PARA</p><h3>{doc.client}</h3><div className="preview-line"><span>{doc.concept}</span><strong>{money.format(doc.amount)}</strong></div>{doc.notes&&<div className="preview-notes"><strong>Notas</strong><span>{doc.notes}</span></div>}<div className="preview-total"><span>Total</span><strong>{money.format(doc.amount)}</strong></div></div><div className="detail-actions"><button className="secondary" onClick={onPdf}><Download /> Descargar PDF</button><button className="secondary" onClick={onShare}><Send /> Compartir PDF</button>{doc.status!=="Pagado"&&<button className="primary" onClick={onPaid}><Check /> Marcar pagado</button>}</div></section></div> }
-function ClientEditor({ client, saving, onClose, onSave }: { client:Client; saving:boolean; onClose:()=>void; onSave:(client:Client)=>void }) { const [name,setName]=useState(client.name); const [email,setEmail]=useState(client.email); const [phone,setPhone]=useState(client.phone); return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(e)=>{e.preventDefault(); if(name)onSave({...client,name,email,phone})}}><div className="sheet-head"><div><p className="eyebrow">EDITAR CLIENTE</p><h2>{client.name}</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Nombre o razón social<input value={name} onChange={(e)=>setName(e.target.value)} autoFocus /></label><label>Correo electrónico<input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} /></label><label>Teléfono<input value={phone} onChange={(e)=>setPhone(e.target.value)} /></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving||!name}><Check /> {saving?"Guardando…":"Guardar cambios"}</button></div></form></div> }
-function DocumentEditor({ document, clients, saving, onClose, onSave }: { document:Document; clients:Client[]; saving:boolean; onClose:()=>void; onSave:(document:Document)=>void }) { const [kind,setKind]=useState(document.kind); const [clientId,setClientId]=useState(document.clientId); const [concept,setConcept]=useState(document.concept); const [amount,setAmount]=useState(String(document.amount)); const [status,setStatus]=useState(document.status); const [notes,setNotes]=useState(document.notes); const selected=clients.find((client)=>client.id===clientId); return <div className="overlay"><form className="sheet" onSubmit={(e)=>{e.preventDefault(); if(selected&&concept&&Number(amount)>0)onSave({...document,kind,clientId,client:selected.name,concept,amount:Number(amount),status,notes})}}><div className="sheet-head"><div><p className="eyebrow">EDITAR DOCUMENTO</p><h2>{document.folio}</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Tipo<select value={kind} onChange={(e)=>setKind(e.target.value as DocumentKind)}><option>Presupuesto</option><option>Recibo</option><option>Cuenta de cobro</option></select></label><label>Cliente<select value={clientId} onChange={(e)=>setClientId(Number(e.target.value))}>{clients.map((client)=><option value={client.id} key={client.id}>{client.name}</option>)}</select></label><label>Concepto<input value={concept} onChange={(e)=>setConcept(e.target.value)} /></label><label>Importe (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(e)=>setAmount(e.target.value)} /></div></label><label>Estado<select value={status} onChange={(e)=>setStatus(e.target.value as Status)}><option>Pendiente</option><option>Aceptado</option><option>Pagado</option><option>Vencido</option></select></label><label>Notas<textarea value={notes} onChange={(e)=>setNotes(e.target.value)} /></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving||!selected||!concept||Number(amount)<=0}><Check /> {saving?"Guardando…":"Guardar cambios"}</button></div></form></div> }
-function ExpenseEditor({ movement, saving, onClose, onSave }: { movement:Movement; saving:boolean; onClose:()=>void; onSave:(movement:Movement)=>void }) { const [description,setDescription]=useState(movement.description); const [category,setCategory]=useState(movement.category); const [amount,setAmount]=useState(String(movement.amount)); return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(e)=>{e.preventDefault(); if(description&&Number(amount)>0)onSave({...movement,description,category,amount:Number(amount)})}}><div className="sheet-head"><div><p className="eyebrow">EDITAR GASTO</p><h2>{movement.description}</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Descripción<input value={description} onChange={(e)=>setDescription(e.target.value)} autoFocus /></label><label>Categoría<select value={category} onChange={(e)=>setCategory(e.target.value)}><option>Operación</option><option>Marketing</option><option>Transporte</option><option>Servicios</option><option>Impuestos</option><option>Otros</option></select></label><label>Importe (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(e)=>setAmount(e.target.value)} /></div></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving||!description||Number(amount)<=0}><Check /> {saving?"Guardando…":"Guardar cambios"}</button></div></form></div> }
-function DeleteConfirm({ target, saving, onClose, onConfirm }: { target:DeleteTarget; saving:boolean; onClose:()=>void; onConfirm:()=>void }) { return <div className="overlay centered"><section className="confirm-card"><span className="confirm-icon"><AlertTriangle /></span><p className="eyebrow">ENVIAR A PAPELERA</p><h2>¿Retirar {target.label}?</h2><p>El registro dejará de aparecer en los informes, pero podrás restaurarlo desde la papelera. Los clientes con documentos activos deben conservarse.</p><div className="confirm-actions"><button className="secondary" onClick={onClose}>Cancelar</button><button className="danger-button" disabled={saving} onClick={onConfirm}><Trash2 /> {saving?"Moviendo…":"Enviar a papelera"}</button></div></section></div> }
-function EmptyState({ title,text }: { title:string; text:string }) { return <div className="empty"><FileText /><h3>{title}</h3><p>{text}</p></div> }
+
+type ReportScope = "month" | "year" | "all";
+function inPeriod(value: string, scope: ReportScope, anchor: Date) {
+  if (scope === "all") return true;
+  const date = new Date(value);
+  if (date.getUTCFullYear() !== anchor.getFullYear()) return false;
+  return scope === "year" || date.getUTCMonth() === anchor.getMonth();
+}
+function reportPeriodLabel(scope: ReportScope, anchor: Date) {
+  if (scope === "all") return "Histórico completo";
+  return new Intl.DateTimeFormat("es-MX", scope === "month" ? { month: "long", year: "numeric" } : { year: "numeric" }).format(anchor).replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function ReportsView({ documents, movements, clients }: { documents: Document[]; movements: Movement[]; clients: Client[] }) {
+  const [scope, setScope] = useState<ReportScope>("month");
+  const [anchor, setAnchor] = useState(() => new Date());
+  const periodDocuments = documents.filter((document) => inPeriod(document.issuedAt, scope, anchor));
+  const periodMovements = movements.filter((movement) => inPeriod(movement.occurredAt, scope, anchor));
+  const income = periodMovements.filter((movement) => movement.type === "Ingreso").reduce((sum, movement) => sum + movement.amount, 0);
+  const expenses = periodMovements.filter((movement) => movement.type === "Gasto").reduce((sum, movement) => sum + movement.amount, 0);
+  const quoted = periodDocuments.filter((document) => document.kind === "Presupuesto").reduce((sum, document) => sum + document.amount, 0);
+  const pending = periodDocuments.reduce((sum, document) => sum + document.balance, 0);
+  const max = Math.max(quoted, income, pending, expenses, 1);
+  const average = periodDocuments.length ? periodDocuments.reduce((sum, document) => sum + document.amount, 0) / periodDocuments.length : 0;
+  const budgets = periodDocuments.filter((document) => document.kind === "Presupuesto");
+  const budgetCounts = { accepted: budgets.filter((document) => document.status === "Aceptado" || document.status === "Pagado").length, pending: budgets.filter((document) => document.status === "Pendiente" || document.status === "Vencido").length, rejected: budgets.filter((document) => document.status === "Rechazado").length };
+  const clientCounts = { accepted: clients.filter((client) => client.stage === "Aceptado").length, pending: clients.filter((client) => client.stage === "Pendiente").length, rejected: clients.filter((client) => client.stage === "Rechazado").length };
+  const label = reportPeriodLabel(scope, anchor);
+  const movePeriod = (direction: number) => setAnchor((current) => {
+    const next = new Date(current);
+    if (scope === "month") next.setMonth(next.getMonth() + direction);
+    if (scope === "year") next.setFullYear(next.getFullYear() + direction);
+    return next;
+  });
+  const downloadReport = async () => {
+    const pdf = new jsPDF({ unit: "mm", format: "letter" });
+    const blue: [number, number, number] = [15, 48, 87];
+    const gold: [number, number, number] = [184, 139, 55];
+    try { pdf.addImage(await imageAsDataUrl(brandLogoSrc), "PNG", 12, 5, 118, 39); }
+    catch { pdf.setTextColor(...blue); pdf.setFont("helvetica", "bold"); pdf.setFontSize(18); pdf.text("FERNÁNDEZ CONDE, S.C.", 18, 22); }
+    pdf.setTextColor(...blue); pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.text("INFORME FINANCIERO", 198, 18, { align: "right" });
+    pdf.setTextColor(90, 98, 108); pdf.setFontSize(10); pdf.text(label, 198, 27, { align: "right" });
+    pdf.setDrawColor(...gold); pdf.setLineWidth(.7); pdf.line(18, 47, 198, 47);
+    pdf.setTextColor(35, 45, 56); pdf.setFontSize(12); pdf.text("Resumen del periodo", 18, 61);
+    const rows: Array<[string, string]> = [["Ingresos cobrados", money.format(income)], ["Gastos", money.format(expenses)], ["Balance", money.format(income - expenses)], ["Presupuestado", money.format(quoted)], ["Saldo pendiente", money.format(pending)]];
+    let y = 73;
+    for (const [name, value] of rows) { pdf.setFont("helvetica", "normal"); pdf.setTextColor(80, 88, 98); pdf.text(name, 22, y); pdf.setFont("helvetica", "bold"); pdf.setTextColor(...blue); pdf.text(value, 194, y, { align: "right" }); pdf.setDrawColor(230, 233, 237); pdf.line(18, y + 4, 198, y + 4); y += 13; }
+    y += 8; pdf.setTextColor(35, 45, 56); pdf.setFontSize(12); pdf.text("Actividad comercial", 18, y);
+    y += 12; pdf.setFontSize(9); pdf.setFont("helvetica", "normal"); pdf.text(`Documentos emitidos: ${periodDocuments.length}`, 22, y); pdf.text(`Ticket promedio: ${money.format(average)}`, 112, y);
+    y += 10; pdf.text(`Presupuestos: ${budgetCounts.accepted} aceptados · ${budgetCounts.pending} pendientes · ${budgetCounts.rejected} rechazados`, 22, y);
+    y += 10; pdf.text(`Clientes actuales: ${clientCounts.accepted} aceptados · ${clientCounts.pending} pendientes · ${clientCounts.rejected} rechazados`, 22, y);
+    y += 17; pdf.setFont("helvetica", "bold"); pdf.setFontSize(11); pdf.text("Movimientos del periodo", 18, y);
+    pdf.setFont("helvetica", "normal"); pdf.setFontSize(8.5);
+    for (const movement of periodMovements.slice(0, 12)) { y += 7; pdf.setTextColor(75, 82, 90); pdf.text(`${formatDate(movement.occurredAt)} · ${movement.description}`, 22, y); pdf.setTextColor(movement.type === "Ingreso" ? 20 : 160, movement.type === "Ingreso" ? 125 : 55, movement.type === "Ingreso" ? 82 : 55); pdf.text(`${movement.type === "Ingreso" ? "+" : "−"}${money.format(movement.amount)}`, 194, y, { align: "right" }); }
+    if (periodMovements.length > 12) { y += 7; pdf.setTextColor(90, 98, 108); pdf.text(`… y ${periodMovements.length - 12} movimiento(s) adicional(es)`, 22, y); }
+    pdf.setDrawColor(...gold); pdf.line(18, 244, 198, 244); pdf.setTextColor(95, 102, 110); pdf.text(`Generado el ${formatDate(new Date().toISOString())} · Control interno, no constituye documentación fiscal`, 108, 253, { align: "center" });
+    pdf.save(`Informe-${label.replace(/\s+/g, "-")}.pdf`);
+  };
+
+  return <div className="page-content reports">
+    <section className="report-controls panel"><div className="period-picker">{scope !== "all" && <button className="icon-button" onClick={() => movePeriod(-1)} aria-label="Periodo anterior"><ChevronLeft /></button>}<strong>{label}</strong>{scope !== "all" && <button className="icon-button" onClick={() => movePeriod(1)} aria-label="Periodo siguiente"><ChevronRight /></button>}</div><div className="report-actions"><select value={scope} onChange={(event) => setScope(event.target.value as ReportScope)}><option value="month">Mensual</option><option value="year">Anual</option><option value="all">Histórico</option></select><button className="primary" onClick={() => void downloadReport()}><Download /> Generar informe PDF</button></div></section>
+    <section className="report-hero"><div><p className="eyebrow">{label.toUpperCase()}</p><h2>{income - expenses >= 0 ? "La firma mantiene un balance positivo." : "Los gastos superan los cobros del periodo."}</h2><p>Los cobros representan el {Math.round((income / Math.max(income + pending, 1)) * 100)}% del ingreso comprometido.</p></div><div className="balance-orb"><small>Balance</small><strong>{money.format(income - expenses)}</strong><span><TrendingUp /> Actualizado</span></div></section>
+    <section className="report-grid"><article className="panel chart-panel"><div className="panel-heading"><div><p className="eyebrow">FINANZAS</p><h3>Ingresos, pendientes y gastos</h3></div></div><div className="bars"><ReportBar label="Cobrado" value={income} max={max} tone="navy" /><ReportBar label="Pendiente" value={pending} max={max} tone="gold" /><ReportBar label="Gastos" value={expenses} max={max} tone="red" /><ReportBar label="Presupuestado" value={quoted} max={max} tone="blue" /></div></article><article className="panel"><p className="eyebrow">INDICADORES</p><h3>Rendimiento comercial</h3><div className="kpi"><span>Documentos emitidos</span><strong>{periodDocuments.length}</strong></div><div className="kpi"><span>Ticket promedio</span><strong>{money.format(average)}</strong></div><div className="kpi"><span>Movimientos</span><strong>{periodMovements.length}</strong></div></article></section>
+    <section className="report-grid status-report-grid"><article className="panel"><div className="panel-heading"><div><p className="eyebrow">PRESUPUESTOS</p><h3>Resultado de propuestas</h3></div></div><StatusSummary accepted={budgetCounts.accepted} pending={budgetCounts.pending} rejected={budgetCounts.rejected} /></article><article className="panel"><div className="panel-heading"><div><p className="eyebrow">CLIENTES</p><h3>Clasificación actual</h3></div></div><StatusSummary accepted={clientCounts.accepted} pending={clientCounts.pending} rejected={clientCounts.rejected} /></article></section>
+  </div>;
+}
+
+function ReportBar({ label, value, max, tone }: { label: string; value: number; max: number; tone: string }) { return <div className="bar-row"><div><span>{label}</span><strong>{money.format(value)}</strong></div><div className="bar-track"><span className={tone} style={{ width: `${value ? Math.max((value / max) * 100, 4) : 0}%` }} /></div></div>; }
+function StatusSummary({ accepted, pending, rejected }: { accepted: number; pending: number; rejected: number }) { const total = Math.max(accepted + pending + rejected, 1); return <div className="status-summary"><div><span>Aceptados</span><strong>{accepted}</strong><i className="accepted" style={{ width: `${accepted / total * 100}%` }} /></div><div><span>Pendientes</span><strong>{pending}</strong><i className="pending" style={{ width: `${pending / total * 100}%` }} /></div><div><span>Rechazados</span><strong>{rejected}</strong><i className="rejected" style={{ width: `${rejected / total * 100}%` }} /></div></div>; }
+
+function ServiceConceptField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return <><input list="service-concepts" value={value} onChange={(event) => onChange(event.target.value)} placeholder="Selecciona o escribe un concepto" /><datalist id="service-concepts">{servicePresets.map((service) => <option key={service} value={service} />)}</datalist><small className="field-help">Puedes elegir una opción o escribir cualquier concepto manualmente.</small></>;
+}
+
+function DocumentComposer({ clients, saving, onClose, onSave }: { clients: Client[]; saving: boolean; onClose: () => void; onSave: (doc: NewDocumentInput) => void }) {
+  const [kind, setKind] = useState<DocumentKind>("Presupuesto");
+  const [clientId, setClientId] = useState(clients[0]?.id ?? 0);
+  const [concept, setConcept] = useState(servicePresets[0]);
+  const [amount, setAmount] = useState("8000");
+  const [notes, setNotes] = useState("");
+  const [requestId] = useState(() => crypto.randomUUID());
+  const selected = clients.find((client) => client.id === clientId);
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selected || !concept.trim() || Number(amount) <= 0) return;
+    onSave({ kind, clientId, client: selected.name, concept: concept.trim(), amount: Number(amount), status: kind === "Recibo" ? "Pagado" : "Pendiente", notes, requestId });
+  };
+  return <div className="overlay"><form className="sheet" onSubmit={submit}><div className="sheet-head"><div><p className="eyebrow">NUEVO DOCUMENTO</p><h2>Crear y enviar</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div>{clients.length === 0 && <div className="empty-note">Primero añade un cliente desde la sección Clientes.</div>}<label>Tipo de documento<select value={kind} onChange={(event) => setKind(event.target.value as DocumentKind)}><option>Presupuesto</option><option>Recibo</option><option>Cuenta de cobro</option></select></label><label>Cliente<select value={clientId} onChange={(event) => setClientId(Number(event.target.value))}>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Concepto<ServiceConceptField value={concept} onChange={setConcept} /></label><label>Importe (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></div></label><div className="total-preview"><span>Total</span><strong>{money.format(Number(amount) || 0)}</strong></div><label>Notas<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Condiciones de pago, alcance o vigencia del presupuesto…" /></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !selected || !concept.trim()}><FileCheck2 /> {saving ? "Guardando…" : "Crear documento"}</button></div></form></div>;
+}
+
+function ClientComposer({ saving, onClose, onSave }: { saving: boolean; onClose: () => void; onSave: (client: Omit<Client, "id" | "total" | "updatedAt">) => void }) {
+  const [name, setName] = useState(""); const [email, setEmail] = useState(""); const [phone, setPhone] = useState(""); const [stage, setStage] = useState<ClientStage>("Pendiente");
+  return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(event) => { event.preventDefault(); if (name) onSave({ name, email, phone, stage }); }}><div className="sheet-head"><div><p className="eyebrow">DIRECTORIO</p><h2>Añadir cliente</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Nombre o razón social<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nombre completo" autoFocus /></label><label>Clasificación<select value={stage} onChange={(event) => setStage(event.target.value as ClientStage)}><option>Aceptado</option><option>Pendiente</option><option>Rechazado</option></select></label><label>Correo electrónico<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="correo@ejemplo.com" /></label><label>Teléfono<input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="55 0000 0000" /></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !name}><UserRound /> {saving ? "Guardando…" : "Guardar cliente"}</button></div></form></div>;
+}
+
+function ExpenseComposer({ partners, defaultSpentBy, saving, onClose, onSave }: { partners: Partner[]; defaultSpentBy: string; saving: boolean; onClose: () => void; onSave: (movement: NewExpenseInput) => void }) {
+  const [description, setDescription] = useState(""); const [category, setCategory] = useState("Operación"); const [amount, setAmount] = useState(""); const [spentBy, setSpentBy] = useState(defaultSpentBy); const [date, setDate] = useState(todayInput()); const [requestId] = useState(() => crypto.randomUUID());
+  return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(event) => { event.preventDefault(); if (description && spentBy && Number(amount) > 0) onSave({ description, category, amount: Number(amount), spentBy, occurredAt: toDatabaseDate(date), requestId }); }}><div className="sheet-head"><div><p className="eyebrow">MOVIMIENTO</p><h2>Registrar gasto</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Descripción<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ej. Publicidad digital" autoFocus /></label><label>Categoría<select value={category} onChange={(event) => setCategory(event.target.value)}>{expenseCategories.map((item) => <option key={item}>{item}</option>)}</select></label><label>¿Quién realizó el gasto?<input list="partner-names" value={spentBy} onChange={(event) => setSpentBy(event.target.value)} placeholder="Nombre de la persona" /><datalist id="partner-names">{partners.map((partner) => <option key={partner.userId} value={partner.name} />)}</datalist><small className="field-help">Puede ser distinto de quien lo registra en la aplicación.</small></label><label>Fecha del gasto<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label><label>Importe (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" /></div></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !description || !spentBy || Number(amount) <= 0}><WalletCards /> {saving ? "Guardando…" : "Registrar gasto"}</button></div></form></div>;
+}
+
+function PaymentComposer({ document, saving, onClose, onSave }: { document: Document; saving: boolean; onClose: () => void; onSave: (payment: NewPaymentInput) => void }) {
+  const [amount, setAmount] = useState(String(document.balance)); const [date, setDate] = useState(todayInput()); const [note, setNote] = useState(""); const [requestId] = useState(() => crypto.randomUUID());
+  const numericAmount = Number(amount);
+  return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(event) => { event.preventDefault(); if (numericAmount > 0 && numericAmount <= document.balance) onSave({ documentId: document.id, amount: numericAmount, occurredAt: toDatabaseDate(date), note, requestId }); }}><div className="sheet-head"><div><p className="eyebrow">PAGO PARCIAL</p><h2>Registrar abono</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><div className="payment-context"><strong>{document.folio}</strong><span>{document.client}</span><small>Saldo actual: {money.format(document.balance)}</small></div><label>Importe del abono (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></div></label>{numericAmount > document.balance && <div className="auth-error">El abono no puede exceder el saldo pendiente.</div>}<label>Fecha del pago<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label><label>Nota o referencia<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ej. Transferencia, primera exhibición…" /></label><div className="total-preview"><span>Saldo después del abono</span><strong>{money.format(Math.max(document.balance - (numericAmount || 0), 0))}</strong></div><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || numericAmount <= 0 || numericAmount > document.balance}><CircleDollarSign /> {saving ? "Guardando…" : "Registrar abono"}</button></div></form></div>;
+}
+
+function DocumentDetail({ doc, payments, onClose, onPdf, onShare, onEdit, onDelete, onPayment, onDeletePayment, onPaid }: { doc: Document; payments: Movement[]; onClose: () => void; onPdf: () => void; onShare: () => void; onEdit: () => void; onDelete: () => void; onPayment: () => void; onDeletePayment: (payment: Movement) => void; onPaid: () => void }) {
+  const progress = doc.amount ? Math.min((doc.paidAmount / doc.amount) * 100, 100) : 0;
+  return <div className="overlay"><section className="sheet detail-sheet"><div className="sheet-head"><div><p className="eyebrow">{doc.kind.toUpperCase()}</p><h2>{doc.folio}</h2></div><div className="sheet-head-actions"><button className="icon-button" aria-label="Editar documento" onClick={onEdit}><Pencil /></button><button className="icon-button danger-icon" aria-label="Enviar documento a la papelera" onClick={onDelete}><Trash2 /></button><button className="icon-button" aria-label="Cerrar" onClick={onClose}><X /></button></div></div><div className="detail-status"><StatusPill status={doc.status} /><span>{doc.date}</span></div><div className="preview-card"><div className="preview-brand"><img className="preview-logo" src={brandLogoSrc} alt="Fernández Conde, S.C." /></div><p>EMITIDO PARA</p><h3>{doc.client}</h3><div className="preview-line"><span>{doc.concept}</span><strong>{money.format(doc.amount)}</strong></div>{doc.notes && <div className="preview-notes"><strong>Notas</strong><span>{doc.notes}</span></div>}<div className="preview-total"><span>Total</span><strong>{money.format(doc.amount)}</strong></div></div><section className="payment-summary"><div><span>Pagado</span><strong>{money.format(doc.paidAmount)}</strong></div><div><span>Saldo pendiente</span><strong>{money.format(doc.balance)}</strong></div><div className="payment-progress"><i style={{ width: `${progress}%` }} /></div></section><section className="payment-breakdown"><div className="payment-heading"><div><p className="eyebrow">PAGOS</p><h3>Desglose de pagos</h3></div>{doc.balance > 0 && <button className="secondary compact" onClick={onPayment}><Plus /> Registrar abono</button>}</div>{payments.map((payment) => <div className="payment-row" key={payment.id}><span><strong>{money.format(payment.amount)}</strong><small>{formatDate(payment.occurredAt)}{payment.note && ` · ${payment.note}`}</small></span><button className="icon-button danger-icon" aria-label="Enviar pago a papelera" onClick={() => onDeletePayment(payment)}><Trash2 /></button></div>)}{payments.length === 0 && <p className="payment-empty">Aún no se han registrado pagos.</p>}</section><div className="detail-actions"><button className="secondary" onClick={onPdf}><Download /> PDF</button><button className="secondary" onClick={onShare}><Send /> Compartir</button>{doc.balance > 0 && <button className="primary" onClick={onPaid}><Check /> Liquidar saldo</button>}</div></section></div>;
+}
+
+function ClientEditor({ client, saving, onClose, onSave }: { client: Client; saving: boolean; onClose: () => void; onSave: (client: Client) => void }) {
+  const [name, setName] = useState(client.name); const [email, setEmail] = useState(client.email); const [phone, setPhone] = useState(client.phone); const [stage, setStage] = useState<ClientStage>(client.stage);
+  return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(event) => { event.preventDefault(); if (name) onSave({ ...client, name, email, phone, stage }); }}><div className="sheet-head"><div><p className="eyebrow">EDITAR CLIENTE</p><h2>{client.name}</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Nombre o razón social<input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label><label>Clasificación<select value={stage} onChange={(event) => setStage(event.target.value as ClientStage)}><option>Aceptado</option><option>Pendiente</option><option>Rechazado</option></select></label><label>Correo electrónico<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label><label>Teléfono<input value={phone} onChange={(event) => setPhone(event.target.value)} /></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !name}><Check /> {saving ? "Guardando…" : "Guardar cambios"}</button></div></form></div>;
+}
+
+function DocumentEditor({ document, clients, saving, onClose, onSave }: { document: Document; clients: Client[]; saving: boolean; onClose: () => void; onSave: (document: Document) => void }) {
+  const [kind, setKind] = useState(document.kind); const [clientId, setClientId] = useState(document.clientId); const [concept, setConcept] = useState(document.concept); const [amount, setAmount] = useState(String(document.amount)); const [status, setStatus] = useState(document.status); const [notes, setNotes] = useState(document.notes); const selected = clients.find((client) => client.id === clientId);
+  return <div className="overlay"><form className="sheet" onSubmit={(event) => { event.preventDefault(); if (selected && concept.trim() && Number(amount) > 0) onSave({ ...document, kind, clientId, client: selected.name, concept: concept.trim(), amount: Number(amount), status, notes }); }}><div className="sheet-head"><div><p className="eyebrow">EDITAR DOCUMENTO</p><h2>{document.folio}</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Tipo<select value={kind} onChange={(event) => setKind(event.target.value as DocumentKind)}><option>Presupuesto</option><option>Recibo</option><option>Cuenta de cobro</option></select></label><label>Cliente<select value={clientId} onChange={(event) => setClientId(Number(event.target.value))}>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select></label><label>Concepto<ServiceConceptField value={concept} onChange={setConcept} /></label><label>Importe (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></div></label><label>Estado<select value={status} onChange={(event) => setStatus(event.target.value as Status)}><option>Pendiente</option><option>Aceptado</option><option>Rechazado</option><option>Vencido</option><option>Pagado</option></select><small className="field-help">El estado Pagado también se actualiza automáticamente conforme a los abonos.</small></label><label>Notas<textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !selected || !concept.trim() || Number(amount) <= 0}><Check /> {saving ? "Guardando…" : "Guardar cambios"}</button></div></form></div>;
+}
+
+function ExpenseEditor({ movement, partners, saving, onClose, onSave }: { movement: Movement; partners: Partner[]; saving: boolean; onClose: () => void; onSave: (movement: Movement) => void }) {
+  const [description, setDescription] = useState(movement.description); const [category, setCategory] = useState(movement.category); const [amount, setAmount] = useState(String(movement.amount)); const [spentBy, setSpentBy] = useState(movement.spentBy); const [date, setDate] = useState(toInputDate(movement.occurredAt));
+  return <div className="overlay"><form className="sheet compact-sheet" onSubmit={(event) => { event.preventDefault(); if (description && spentBy && Number(amount) > 0) onSave({ ...movement, description, category, amount: Number(amount), spentBy, occurredAt: toDatabaseDate(date) }); }}><div className="sheet-head"><div><p className="eyebrow">EDITAR GASTO</p><h2>{movement.description}</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div><label>Descripción<input value={description} onChange={(event) => setDescription(event.target.value)} autoFocus /></label><label>Categoría<select value={category} onChange={(event) => setCategory(event.target.value)}>{expenseCategories.map((item) => <option key={item}>{item}</option>)}</select></label><label>¿Quién realizó el gasto?<input list="partner-edit-names" value={spentBy} onChange={(event) => setSpentBy(event.target.value)} /><datalist id="partner-edit-names">{partners.map((partner) => <option key={partner.userId} value={partner.name} />)}</datalist></label><label>Fecha del gasto<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label><label>Importe (MXN)<div className="money-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></div></label><div className="sheet-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !description || !spentBy || Number(amount) <= 0}><Check /> {saving ? "Guardando…" : "Guardar cambios"}</button></div></form></div>;
+}
+
+function DeleteConfirm({ target, saving, onClose, onConfirm }: { target: DeleteTarget; saving: boolean; onClose: () => void; onConfirm: () => void }) { return <div className="overlay centered"><section className="confirm-card"><span className="confirm-icon"><AlertTriangle /></span><p className="eyebrow">ENVIAR A PAPELERA</p><h2>¿Retirar {target.label}?</h2><p>El registro dejará de aparecer en los informes, pero podrás restaurarlo desde la papelera. Los clientes con documentos activos deben conservarse.</p><div className="confirm-actions"><button className="secondary" onClick={onClose}>Cancelar</button><button className="danger-button" disabled={saving} onClick={onConfirm}><Trash2 /> {saving ? "Moviendo…" : "Enviar a papelera"}</button></div></section></div>; }
+function EmptyState({ title, text }: { title: string; text: string }) { return <div className="empty"><FileText /><h3>{title}</h3><p>{text}</p></div>; }

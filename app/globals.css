@@ -80,3 +80,45 @@ button,input,select,textarea { font:inherit } button { cursor:pointer }
   .offline-banner { top:78px; padding:9px 14px; text-align:center }
   .trash-intro { padding:20px }.trash-intro>svg { width:32px }.trash-row { grid-template-columns:34px minmax(0,1fr) }.trash-row button { grid-column:2; justify-self:start }
 }
+
+/* V3: commercial stages, partial payments and historical reports */
+.brand-welcome { min-height:82px; align-items:center }
+.brand-welcome img { display:block; width:min(520px,62%); max-height:88px; object-fit:contain; object-position:left center }
+.status.rechazado,.status.client-rechazado { color:var(--red); background:#ffeded }
+.status.client-aceptado { color:var(--green); background:#e9f7f1 }
+.status.client-pendiente { color:var(--amber); background:#fff4df }
+.client-top .row-actions { flex-wrap:wrap; justify-content:flex-end }
+.field-help { color:var(--muted); font-size:10px; font-weight:400; line-height:1.4 }
+.payment-context { padding:17px; display:flex; flex-direction:column; gap:5px; border-radius:11px; color:var(--navy); background:#f2f5f8 }
+.payment-context span,.payment-context small { color:var(--muted) }
+.payment-summary { margin-top:17px; padding:17px; display:grid; grid-template-columns:1fr 1fr; gap:12px; border:1px solid var(--line); border-radius:11px; background:#fbfcfd }
+.payment-summary>div:not(.payment-progress) { display:flex; flex-direction:column; gap:5px }
+.payment-summary span { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em }
+.payment-summary strong { color:var(--navy); font-size:16px }
+.payment-progress { grid-column:1/-1; height:7px; overflow:hidden; border-radius:99px; background:#e7ebef }
+.payment-progress i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--gold),var(--green)) }
+.payment-breakdown { margin-top:18px; border:1px solid var(--line); border-radius:11px; overflow:hidden }
+.payment-heading { padding:15px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px; background:#f8f9fa }
+.payment-heading h3 { margin:3px 0 0; font-size:14px }
+.payment-row { min-height:58px; padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid var(--line) }
+.payment-row>span { min-width:0; display:flex; flex-direction:column; gap:4px }
+.payment-row small { overflow:hidden; color:var(--muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap }
+.payment-row .icon-button { flex:0 0 auto; width:34px; height:34px }
+.payment-empty { margin:0; padding:24px 16px; color:var(--muted); text-align:center; font-size:11px }
+.report-controls { margin-bottom:16px; padding:13px 16px; display:flex; align-items:center; justify-content:space-between; gap:14px }
+.period-picker,.report-actions { display:flex; align-items:center; gap:10px }
+.period-picker strong { min-width:170px; color:var(--navy); text-align:center }
+.report-actions select { min-height:44px; padding:0 35px 0 12px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--ink); font-weight:700 }
+.status-report-grid { grid-template-columns:1fr 1fr }
+.status-summary { padding:0 22px 22px; display:grid; gap:15px }
+.status-summary>div { display:grid; grid-template-columns:1fr auto; gap:7px; color:var(--muted); font-size:12px }
+.status-summary strong { color:var(--ink) }
+.status-summary i { grid-column:1/-1; display:block; min-width:3px; height:7px; border-radius:99px }
+.status-summary i.accepted { background:var(--green) }.status-summary i.pending { background:var(--amber) }.status-summary i.rejected { background:var(--red) }
+
+@media (max-width:760px) {
+  .brand-welcome { min-height:64px; align-items:center }.brand-welcome img { width:min(72%,310px); max-height:68px }.brand-welcome .text-button { flex:0 0 42px }
+  .report-controls { align-items:stretch; flex-direction:column }.period-picker { justify-content:space-between }.period-picker strong { min-width:0 }.report-actions { display:grid; grid-template-columns:1fr 1.5fr }.report-actions select,.report-actions .primary { width:100%; padding-left:9px; padding-right:9px; font-size:11px }
+  .status-report-grid { grid-template-columns:1fr }
+  .payment-heading { align-items:flex-start; flex-direction:column }.payment-heading button { width:100% }
+}

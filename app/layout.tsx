@@ -6,8 +6,12 @@ export const metadata: Metadata = {
   description: "Presupuestos, recibos y control financiero de Fernández Conde, S.C.",
   manifest: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/manifest.webmanifest`,
   icons: {
-    icon: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/favicon.svg`,
-    shortcut: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/favicon.svg`,
+    icon: [
+      { url: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/icon-192.png`, sizes: "192x192", type: "image/png" },
+      { url: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/icon-512.png`, sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/icon-192.png`,
+    apple: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/apple-touch-icon.png`,
   },
 };
 
