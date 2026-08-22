@@ -3,11 +3,15 @@ import { dbRequest } from "./supabase";
 export type DocumentKind = "Presupuesto" | "Recibo" | "Cuenta de cobro";
 export type Status = "Pagado" | "Pendiente" | "Vencido" | "Aceptado" | "Rechazado";
 export type ClientStage = "Aceptado" | "Pendiente" | "Rechazado";
+export type PracticeArea = "Migratorio/COMAR" | "Arrendamiento" | "Civil" | "Otro";
 export type RecordEntity = "client" | "document" | "movement";
 export type Partner = { userId: string; name: string; email: string };
 export type Companion = { name: string; relationship: string };
 export type PaymentStage = { id: string; description: string; amount: number; scheduledDate?: string };
-export type Client = { id: number; name: string; email: string; phone: string; stage: ClientStage; internalKey: string; companions: Companion[]; total: number; updatedAt: string };
+export type Client = { id: number; name: string; email: string; phone: string; stage: ClientStage; practiceArea: PracticeArea | null; internalKey: string; companions: Companion[]; total: number; updatedAt: string };
+export type CaseStageTemplate = { id: number; practiceArea: PracticeArea; name: string };
+export type CaseStageStep = { id: number; templateId: number; name: string; groupName: string; groupOrder: number; order: number };
+export type ClientCaseStageProgress = { clientId: number; stepId: number; completed: boolean; changedAt: string; changedBy: string | null };
 export type FinanceDocument = { id: number; folio: string; kind: DocumentKind; clientId: number; client: string; concept: string; amount: number; paidAmount: number; balance: number; paymentPlan: PaymentStage[]; status: Status; date: string; issuedAt: string; notes: string; updatedAt: string };
 export type Movement = { id: number; type: "Ingreso" | "Gasto"; category: string; description: string; amount: number; occurredAt: string; documentId?: number | null; paymentStageId?: string | null; spentBy: string; note: string; updatedAt: string };
 export type DocumentMargin = { documentId: number; clientId: number; folio: string; concept: string; income: number; expenses: number; margin: number; marginPercent: number | null };
@@ -18,9 +22,9 @@ export type NewDocumentInput = Omit<FinanceDocument, "id" | "folio" | "date" | "
 export type NewExpenseInput = Pick<Movement, "category" | "description" | "amount" | "spentBy" | "occurredAt" | "documentId"> & { requestId: string };
 export type NewPaymentInput = Pick<Movement, "amount" | "occurredAt" | "note" | "paymentStageId"> & { documentId: number; requestId: string };
 export type TrashItem = { entity: RecordEntity; id: number; label: string; detail: string; deletedAt: string; deletedBy: string; updatedAt: string };
-export type AuditEntry = { id: number; entity: RecordEntity; recordId: number; action: "created" | "updated" | "trashed" | "restored"; actor: string; occurredAt: string };
+export type AuditEntry = { id: number; entity: RecordEntity; recordId: number; action: "created" | "updated" | "trashed" | "restored"; actor: string; occurredAt: string; detail?: string };
 
-type ClientRow = { id: number; name: string; email: string; phone: string; stage: ClientStage; internal_key?: string | null; companions?: Companion[] | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null };
+type ClientRow = { id: number; name: string; email: string; phone: string; stage: ClientStage; practice_area?: PracticeArea | null; internal_key?: string | null; companions?: Companion[] | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null };
 type DocumentRow = { id: number; folio: string; kind: DocumentKind; client_id: number; concept: string; amount_cents: number; payment_plan?: Array<{ id: string; description: string; amountCents: number; scheduledDate?: string | null }> | null; status: Status; notes: string; issued_at: string; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; clients?: { name: string } | null };
 type MovementRow = { id: number; type: "Ingreso" | "Gasto"; category: string; description: string; amount_cents: number; occurred_at: string; document_id?: number | null; payment_stage_id?: string | null; spent_by?: string | null; note?: string | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; deleted_with_document?: boolean; documents?: { folio: string } | null };
 type PartnerRow = { user_id: string; display_name: string; email: string };
@@ -29,7 +33,10 @@ type ClientMarginRow = { client_id: number; client_name: string; income_cents: n
 type ProfitSettingsRow = { fund_bps: number; oscar_bps: number; dan_bps: number; updated_at: string };
 type ProfitDistributionRow = { id: number; period_start: string; period_end: string; income_cents: number; expense_cents: number; net_profit_cents: number; fund_cents: number; oscar_cents: number; dan_cents: number; fund_bps: number; oscar_bps: number; dan_bps: number; created_at: string; voided_at?: string | null };
 type FundBalanceRow = { balance_cents: number; allocated_cents: number; spent_cents: number };
-type AuditRow = { id: number; entity: RecordEntity; record_id: number; action: AuditEntry["action"]; actor_id?: string | null; occurred_at: string };
+type CaseStageTemplateRow = { id: number; practice_area: PracticeArea; name: string };
+type CaseStageStepRow = { id: number; template_id: number; name: string; group_name: string; group_order: number; step_order: number };
+type ClientCaseStageProgressRow = { client_id: number; step_id: number; completed: boolean; changed_at: string; changed_by?: string | null };
+type AuditRow = { id: number; entity: RecordEntity; record_id: number; action: AuditEntry["action"]; actor_id?: string | null; snapshot?: Record<string, unknown> | null; occurred_at: string };
 type TimestampRow = { updated_at: string };
 type CreatedDocumentRow = TimestampRow & { id: number; folio: string; issued_at: string };
 
@@ -47,7 +54,7 @@ function mapDocument(row: DocumentRow, paidAmount: number): FinanceDocument {
 }
 
 export async function loadFinanceData() {
-  const [clientRows, documentRows, movementRows, partnerRows, documentMarginRows, clientMarginRows, settingsRows, distributionRows, fundRows] = await Promise.all([
+  const [clientRows, documentRows, movementRows, partnerRows, documentMarginRows, clientMarginRows, settingsRows, distributionRows, fundRows, templateRows, caseStepRows, caseProgressRows] = await Promise.all([
     dbRequest<ClientRow[]>("clients?select=*&deleted_at=is.null&order=id.desc"),
     dbRequest<DocumentRow[]>("documents?select=*,clients(name)&deleted_at=is.null&order=id.desc"),
     dbRequest<MovementRow[]>("movements?select=*&deleted_at=is.null&order=occurred_at.desc,id.desc"),
@@ -57,12 +64,15 @@ export async function loadFinanceData() {
     dbRequest<ProfitSettingsRow[]>("profit_distribution_settings_v6?select=*&limit=1"),
     dbRequest<ProfitDistributionRow[]>("finance_profit_distributions_v6_2?select=*&order=period_start.desc,created_at.desc"),
     dbRequest<FundBalanceRow[]>("finance_fund_balance_v6?select=balance_cents,allocated_cents,spent_cents"),
+    dbRequest<CaseStageTemplateRow[]>("case_stage_templates_v8?select=id,practice_area,name&order=id"),
+    dbRequest<CaseStageStepRow[]>("case_stage_steps_v8?select=id,template_id,name,group_name,group_order,step_order&order=group_order,step_order"),
+    dbRequest<ClientCaseStageProgressRow[]>("client_case_stage_progress_v8?select=client_id,step_id,completed,changed_at,changed_by&order=client_id,step_id"),
   ]);
   const movements = movementRows.map(mapMovement);
   const paidByDocument = new Map<number, number>();
   for (const movement of movements) if (movement.type === "Ingreso" && movement.documentId) paidByDocument.set(movement.documentId, (paidByDocument.get(movement.documentId) ?? 0) + movement.amount);
   const documents = documentRows.map((row) => mapDocument(row, paidByDocument.get(row.id) ?? 0));
-  const clients: Client[] = clientRows.map((row) => ({ id: row.id, name: row.name, email: row.email, phone: row.phone, stage: row.stage ?? "Pendiente", internalKey: row.internal_key ?? "", companions: Array.isArray(row.companions) ? row.companions : [], updatedAt: row.updated_at, total: documents.filter((document) => document.clientId === row.id).reduce((sum, document) => sum + document.paidAmount, 0) }));
+  const clients: Client[] = clientRows.map((row) => ({ id: row.id, name: row.name, email: row.email, phone: row.phone, stage: row.stage ?? "Pendiente", practiceArea: row.practice_area ?? null, internalKey: row.internal_key ?? "", companions: Array.isArray(row.companions) ? row.companions : [], updatedAt: row.updated_at, total: documents.filter((document) => document.clientId === row.id).reduce((sum, document) => sum + document.paidAmount, 0) }));
   const partners: Partner[] = partnerRows.map((row) => ({ userId: row.user_id, name: row.display_name || row.email, email: row.email }));
   const documentMargins: DocumentMargin[] = documentMarginRows.map((row) => ({ documentId: row.document_id, clientId: row.client_id, folio: row.folio, concept: row.concept, income: row.income_cents / 100, expenses: row.expense_cents / 100, margin: row.margin_cents / 100, marginPercent: row.margin_percent === null ? null : Number(row.margin_percent) }));
   const clientMargins: ClientMargin[] = clientMarginRows.map((row) => ({ clientId: row.client_id, clientName: row.client_name, income: row.income_cents / 100, expenses: row.expense_cents / 100, margin: row.margin_cents / 100, marginPercent: row.margin_percent === null ? null : Number(row.margin_percent) }));
@@ -75,7 +85,14 @@ export async function loadFinanceData() {
   const fundBalance = (fundRows[0]?.balance_cents ?? 0) / 100;
   const fundAllocated = (fundRows[0]?.allocated_cents ?? 0) / 100;
   const fundSpent = (fundRows[0]?.spent_cents ?? 0) / 100;
-  return { clients, documents, movements, partners, documentMargins, clientMargins, profitSettings, distributions, voidedDistributions, fundBalance, fundAllocated, fundSpent };
+  const caseStageTemplates: CaseStageTemplate[] = templateRows.map((row) => ({ id: row.id, practiceArea: row.practice_area, name: row.name }));
+  const caseStageSteps: CaseStageStep[] = caseStepRows.map((row) => ({ id: row.id, templateId: row.template_id, name: row.name, groupName: row.group_name, groupOrder: row.group_order, order: row.step_order }));
+  const clientCaseStageProgress: ClientCaseStageProgress[] = caseProgressRows.map(mapClientCaseStageProgress);
+  return { clients, documents, movements, partners, documentMargins, clientMargins, profitSettings, distributions, voidedDistributions, fundBalance, fundAllocated, fundSpent, caseStageTemplates, caseStageSteps, clientCaseStageProgress };
+}
+
+function mapClientCaseStageProgress(row: ClientCaseStageProgressRow): ClientCaseStageProgress {
+  return { clientId: row.client_id, stepId: row.step_id, completed: row.completed, changedAt: row.changed_at, changedBy: row.changed_by ?? null };
 }
 
 function mapProfitDistribution(row: ProfitDistributionRow): ProfitDistribution {
@@ -99,21 +116,30 @@ export async function loadTrashData() {
 }
 
 export async function loadAuditLog() {
-  const [rows, partners] = await Promise.all([dbRequest<AuditRow[]>("finance_audit_log?select=id,entity,record_id,action,actor_id,occurred_at&order=occurred_at.desc&limit=80"), dbRequest<PartnerRow[]>("partners?select=user_id,display_name,email")]);
+  const [rows, partners] = await Promise.all([dbRequest<AuditRow[]>("finance_audit_log?select=id,entity,record_id,action,actor_id,snapshot,occurred_at&order=occurred_at.desc&limit=80"), dbRequest<PartnerRow[]>("partners?select=user_id,display_name,email")]);
   const partnerNames = new Map(partners.map((partner) => [partner.user_id, partner.display_name || partner.email]));
-  return rows.map((row): AuditEntry => ({ id: row.id, entity: row.entity, recordId: row.record_id, action: row.action, actor: row.actor_id ? partnerNames.get(row.actor_id) ?? "Socio autorizado" : "Registro anterior", occurredAt: formatDateTime(row.occurred_at) }));
+  return rows.map((row): AuditEntry => {
+    const caseStageChange = row.snapshot?.v8_event === "case_stage_changed";
+    const detail = caseStageChange ? `${row.snapshot?.completed ? "completó" : "marcó pendiente"} la etapa ${String(row.snapshot?.step_name ?? "procesal")}` : undefined;
+    return { id: row.id, entity: row.entity, recordId: row.record_id, action: row.action, actor: row.actor_id ? partnerNames.get(row.actor_id) ?? "Socio autorizado" : "Registro anterior", occurredAt: formatDateTime(row.occurred_at), detail };
+  });
 }
 
 export async function createClient(input: Omit<Client, "id" | "total" | "updatedAt">) {
-  const [row] = await dbRequest<ClientRow[]>("clients", { method: "POST", headers: returned, body: JSON.stringify({ name: input.name, email: input.email, phone: input.phone, stage: input.stage, internal_key: input.internalKey, companions: input.companions }) });
-  return { id: row.id, name: row.name, email: row.email, phone: row.phone, stage: row.stage, internalKey: row.internal_key ?? "", companions: row.companions ?? [], total: 0, updatedAt: row.updated_at } as Client;
+  const [row] = await dbRequest<ClientRow[]>("clients", { method: "POST", headers: returned, body: JSON.stringify({ name: input.name, email: input.email, phone: input.phone, stage: input.stage, practice_area: input.practiceArea, internal_key: input.internalKey, companions: input.companions }) });
+  return { id: row.id, name: row.name, email: row.email, phone: row.phone, stage: row.stage, practiceArea: row.practice_area ?? null, internalKey: row.internal_key ?? "", companions: row.companions ?? [], total: 0, updatedAt: row.updated_at } as Client;
 }
 
 export async function updateClient(input: Client) {
   const path = `clients?id=eq.${input.id}&updated_at=eq.${encodeURIComponent(input.updatedAt)}&deleted_at=is.null`;
-  const rows = await dbRequest<ClientRow[]>(path, { method: "PATCH", headers: returned, body: JSON.stringify({ name: input.name, email: input.email, phone: input.phone, stage: input.stage, internal_key: input.internalKey, companions: input.companions }) });
+  const rows = await dbRequest<ClientRow[]>(path, { method: "PATCH", headers: returned, body: JSON.stringify({ name: input.name, email: input.email, phone: input.phone, stage: input.stage, practice_area: input.practiceArea, internal_key: input.internalKey, companions: input.companions }) });
   if (!rows.length) throw new Error("Este cliente fue modificado o eliminado por tu socio. Actualiza la pantalla.");
   return { ...input, updatedAt: rows[0].updated_at };
+}
+
+export async function setClientCaseStage(clientId: number, stepId: number, completed: boolean) {
+  const [row] = await dbRequest<ClientCaseStageProgressRow[]>("rpc/set_client_case_stage_v8", { method: "POST", body: JSON.stringify({ p_client_id: clientId, p_step_id: stepId, p_completed: completed }) });
+  return mapClientCaseStageProgress(row);
 }
 
 export async function createDocument(input: NewDocumentInput) {
