@@ -179,8 +179,8 @@ export async function updateProfitSettings(input: Omit<ProfitSettings, "updatedA
   return { fundPercent: row.fund_bps / 100, oscarPercent: row.oscar_bps / 100, danPercent: row.dan_bps / 100, updatedAt: row.updated_at } as ProfitSettings;
 }
 
-export async function createProfitDistribution(input: { periodStart: string; periodEnd: string; requestId: string }) {
-  const [row] = await dbRequest<ProfitDistributionRow[]>("rpc/create_profit_distribution_v6_2", { method: "POST", body: JSON.stringify({ p_period_start: input.periodStart, p_period_end: input.periodEnd, p_request_id: input.requestId }) });
+export async function createProfitDistribution(input: { periodStart: string; periodEnd: string; fundAmount: number | null; requestId: string }) {
+  const [row] = await dbRequest<ProfitDistributionRow[]>("rpc/create_profit_distribution_v8_3", { method: "POST", body: JSON.stringify({ p_period_start: input.periodStart, p_period_end: input.periodEnd, p_fund_cents: input.fundAmount === null ? null : Math.round(input.fundAmount * 100), p_request_id: input.requestId }) });
   return mapProfitDistribution(row);
 }
 
