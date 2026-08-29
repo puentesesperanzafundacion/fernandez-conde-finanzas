@@ -69,6 +69,16 @@ function clippedLines(pdf: jsPDF, text: string, width: number, maxLines: number)
   return visible;
 }
 
+function drawCorporateContact(pdf: jsPDF, startY: number) {
+  pdf.setTextColor(95, 102, 110);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8.2);
+  pdf.text("contacto@fernandezconde.com  ·  www.fernandezconde.com", 108, startY, { align: "center" });
+  pdf.setFontSize(7.6);
+  pdf.text("Av. Insurgentes Sur 1783, Oficina 301, Tercer Piso", 108, startY + 5.5, { align: "center" });
+  pdf.text("Colonia Guadalupe Inn, Álvaro Obregón, CDMX", 108, startY + 10.5, { align: "center" });
+}
+
 export default function HomePage() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -364,7 +374,7 @@ export default function HomePage() {
       pdf.text("El presente documento no constituye un CFDI.", 18, 220);
       pdf.text("Gracias por confiar en Fernández Conde, S.C.", 18, 227);
       pdf.setDrawColor(...gold); pdf.setLineWidth(1); pdf.line(18, 244, 198, 244);
-      pdf.setTextColor(95, 102, 110); pdf.text("contacto@fernandezconde.mx  ·  Ciudad de México", 108, 253, { align: "center" });
+      drawCorporateContact(pdf, 251);
     };
     const startDocumentContinuation = (section: string) => {
       drawDocumentFooter();
@@ -453,7 +463,8 @@ export default function HomePage() {
     pdf.setFontSize(9); pdf.setTextColor(40, 47, 55); pdf.text("CONCEPTO", 18, 161); pdf.setFont("helvetica", "normal"); pdf.text(clippedLines(pdf, stage?.description ?? "Pago general de honorarios", 180, 3), 18, 170);
     if (payment.note) { pdf.setFont("helvetica", "bold"); pdf.text("REFERENCIA", 18, 190); pdf.setFont("helvetica", "normal"); pdf.text(clippedLines(pdf, payment.note, 180, 3), 18, 199); }
     pdf.setFont("helvetica", "bold"); pdf.setTextColor(...blue); pdf.text(`Saldo general posterior: ${money.format(balanceAfter)}`, 198, 214, { align: "right" });
-    pdf.setDrawColor(...gold); pdf.line(18, 244, 198, 244); pdf.setTextColor(95, 102, 110); pdf.setFont("helvetica", "normal"); pdf.setFontSize(8.5); pdf.text("Comprobante interno de pago · No constituye CFDI", 108, 253, { align: "center" });
+    pdf.setDrawColor(...gold); pdf.line(18, 244, 198, 244); pdf.setTextColor(95, 102, 110); pdf.setFont("helvetica", "normal"); pdf.setFontSize(8.5); pdf.text("Comprobante interno de pago · No constituye CFDI", 108, 250, { align: "center" });
+    drawCorporateContact(pdf, 256);
     const filename = `REC-${doc.folio}-${payment.id}.pdf`;
     if (share && navigator.share) {
       const file = new File([pdf.output("blob")], filename, { type: "application/pdf" });
@@ -641,7 +652,8 @@ function ReportsView({ documents, movements, clients, documentMargins, clientMar
     const drawReportFooter = () => {
       pdf.setDrawColor(...gold); pdf.setLineWidth(.6); pdf.line(18, 244, 198, 244);
       pdf.setTextColor(95, 102, 110); pdf.setFont("helvetica", "normal"); pdf.setFontSize(8.5);
-      pdf.text(`Generado el ${formatDate(new Date().toISOString())} · Control interno, no constituye documentación fiscal`, 108, 253, { align: "center" });
+      pdf.text(`Generado el ${formatDate(new Date().toISOString())} · Control interno, no constituye documentación fiscal`, 108, 250, { align: "center" });
+      drawCorporateContact(pdf, 256);
     };
     const startReportContinuation = () => {
       drawReportFooter();
