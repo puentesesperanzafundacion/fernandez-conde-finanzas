@@ -8,7 +8,7 @@ export type RecordEntity = "client" | "document" | "movement";
 export type Partner = { userId: string; name: string; email: string };
 export type Companion = { name: string; relationship: string };
 export type PaymentStage = { id: string; description: string; amount: number; scheduledDate?: string };
-export type Client = { id: number; name: string; email: string; phone: string; stage: ClientStage; practiceArea: PracticeArea | null; internalKey: string; companions: Companion[]; total: number; updatedAt: string };
+export type Client = { id: number; name: string; email: string; phone: string; nationality: string; stage: ClientStage; practiceArea: PracticeArea | null; internalKey: string; companions: Companion[]; total: number; updatedAt: string };
 export type CaseStageTemplate = { id: number; practiceArea: PracticeArea; name: string };
 export type CaseStageStep = { id: number; templateId: number; name: string; groupName: string; groupOrder: number; order: number };
 export type ClientCaseStageProgress = { clientId: number; stepId: number; completed: boolean; changedAt: string; changedBy: string | null };
@@ -24,7 +24,7 @@ export type NewPaymentInput = Pick<Movement, "amount" | "occurredAt" | "note" | 
 export type TrashItem = { entity: RecordEntity; id: number; label: string; detail: string; deletedAt: string; deletedBy: string; updatedAt: string };
 export type AuditEntry = { id: number; entity: RecordEntity; recordId: number; action: "created" | "updated" | "trashed" | "restored"; actor: string; occurredAt: string; detail?: string };
 
-type ClientRow = { id: number; name: string; email: string; phone: string; stage: ClientStage; practice_area?: PracticeArea | null; internal_key?: string | null; companions?: Companion[] | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null };
+type ClientRow = { id: number; name: string; email: string; phone: string; nationality?: string | null; stage: ClientStage; practice_area?: PracticeArea | null; internal_key?: string | null; companions?: Companion[] | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null };
 type DocumentRow = { id: number; folio: string; kind: DocumentKind; client_id: number; concept: string; amount_cents: number; payment_plan?: Array<{ id: string; description: string; amountCents: number; scheduledDate?: string | null }> | null; status: Status; notes: string; issued_at: string; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; clients?: { name: string } | null };
 type MovementRow = { id: number; type: "Ingreso" | "Gasto"; category: string; description: string; amount_cents: number; occurred_at: string; document_id?: number | null; payment_stage_id?: string | null; spent_by?: string | null; note?: string | null; updated_at: string; deleted_at?: string | null; deleted_by?: string | null; deleted_with_document?: boolean; documents?: { folio: string } | null };
 type PartnerRow = { user_id: string; display_name: string; email: string };
@@ -72,7 +72,7 @@ export async function loadFinanceData() {
   const paidByDocument = new Map<number, number>();
   for (const movement of movements) if (movement.type === "Ingreso" && movement.documentId) paidByDocument.set(movement.documentId, (paidByDocument.get(movement.documentId) ?? 0) + movement.amount);
   const documents = documentRows.map((row) => mapDocument(row, paidByDocument.get(row.id) ?? 0));
-  const clients: Client[] = clientRows.map((row) => ({ id: row.id, name: row.name, email: row.email, phone: row.phone, stage: row.stage ?? "Pendiente", practiceArea: row.practice_area ?? null, internalKey: row.internal_key ?? "", companions: Array.isArray(row.companions) ? row.companions : [], updatedAt: row.updated_at, total: documents.filter((document) => document.clientId === row.id).reduce((sum, document) => sum + document.paidAmount, 0) }));
+  const clients: Client[] = clientRows.map((row) => ({ id: row.id, name: row.name, email: row.email, phone: row.phone, nationality: row.nationality ?? "", stage: row.stage ?? "Pendiente", practiceArea: row.practice_area ?? null, internalKey: row.internal_key ?? "", companions: Array.isArray(row.companions) ? row.companions : [], updatedAt: row.updated_at, total: documents.filter((document) => document.clientId === row.id).reduce((sum, document) => sum + document.paidAmount, 0) }));
   const partners: Partner[] = partnerRows.map((row) => ({ userId: row.user_id, name: row.display_name || row.email, email: row.email }));
   const documentMargins: DocumentMargin[] = documentMarginRows.map((row) => ({ documentId: row.document_id, clientId: row.client_id, folio: row.folio, concept: row.concept, income: row.income_cents / 100, expenses: row.expense_cents / 100, margin: row.margin_cents / 100, marginPercent: row.margin_percent === null ? null : Number(row.margin_percent) }));
   const clientMargins: ClientMargin[] = clientMarginRows.map((row) => ({ clientId: row.client_id, clientName: row.client_name, income: row.income_cents / 100, expenses: row.expense_cents / 100, margin: row.margin_cents / 100, marginPercent: row.margin_percent === null ? null : Number(row.margin_percent) }));
@@ -126,13 +126,13 @@ export async function loadAuditLog() {
 }
 
 export async function createClient(input: Omit<Client, "id" | "total" | "updatedAt">) {
-  const [row] = await dbRequest<ClientRow[]>("clients", { method: "POST", headers: returned, body: JSON.stringify({ name: input.name, email: input.email, phone: input.phone, stage: input.stage, practice_area: input.practiceArea, internal_key: input.internalKey, companions: input.companions }) });
-  return { id: row.id, name: row.name, email: row.email, phone: row.phone, stage: row.stage, practiceArea: row.practice_area ?? null, internalKey: row.internal_key ?? "", companions: row.companions ?? [], total: 0, updatedAt: row.updated_at } as Client;
+  const [row] = await dbRequest<ClientRow[]>("clients", { method: "POST", headers: returned, body: JSON.stringify({ name: input.name, email: input.email, phone: input.phone, nationality: input.nationality || null, stage: input.stage, practice_area: input.practiceArea, internal_key: input.internalKey, companions: input.companions }) });
+  return { id: row.id, name: row.name, email: row.email, phone: row.phone, nationality: row.nationality ?? "", stage: row.stage, practiceArea: row.practice_area ?? null, internalKey: row.internal_key ?? "", companions: row.companions ?? [], total: 0, updatedAt: row.updated_at } as Client;
 }
 
 export async function updateClient(input: Client) {
   const path = `clients?id=eq.${input.id}&updated_at=eq.${encodeURIComponent(input.updatedAt)}&deleted_at=is.null`;
-  const rows = await dbRequest<ClientRow[]>(path, { method: "PATCH", headers: returned, body: JSON.stringify({ name: input.name, email: input.email, phone: input.phone, stage: input.stage, practice_area: input.practiceArea, internal_key: input.internalKey, companions: input.companions }) });
+  const rows = await dbRequest<ClientRow[]>(path, { method: "PATCH", headers: returned, body: JSON.stringify({ name: input.name, email: input.email, phone: input.phone, nationality: input.nationality || null, stage: input.stage, practice_area: input.practiceArea, internal_key: input.internalKey, companions: input.companions }) });
   if (!rows.length) throw new Error("Este cliente fue modificado o eliminado por tu socio. Actualiza la pantalla.");
   return { ...input, updatedAt: rows[0].updated_at };
 }
