@@ -49,6 +49,7 @@ const sameMonth = (value: string, reference = new Date()) => {
   const date = new Date(value);
   return date.getUTCFullYear() === reference.getFullYear() && date.getUTCMonth() === reference.getMonth();
 };
+const isActiveReceivable = (document: Document) => document.balance > 0 && document.status !== "Rechazado";
 
 async function imageAsDataUrl(src: string) {
   const blob = await fetch(src).then((response) => {
@@ -181,7 +182,7 @@ export default function HomePage() {
     const currentMovements = movements.filter((movement) => sameMonth(movement.occurredAt));
     return {
       income: currentMovements.filter((movement) => movement.type === "Ingreso").reduce((sum, movement) => sum + movement.amount, 0),
-      pending: currentDocuments.reduce((sum, document) => sum + document.balance, 0),
+      pending: documents.filter(isActiveReceivable).reduce((sum, document) => sum + document.balance, 0),
       quoted: currentDocuments.filter((document) => document.kind === "Presupuesto").reduce((sum, document) => sum + document.amount, 0),
       expenses: currentMovements.filter((movement) => movement.type === "Gasto").reduce((sum, movement) => sum + movement.amount, 0),
     };
@@ -532,7 +533,7 @@ function monthLabel(date = new Date()) { return new Intl.DateTimeFormat("es-MX",
 function Dashboard({ totals, documents, movements, setTab, openDocument, openComposer }: { totals: DashboardTotals; documents: Document[]; movements: Movement[]; setTab: (tab: Tab) => void; openDocument: (doc: Document) => void; openComposer: () => void }) {
   return <div className="page-content">
     <section className="welcome-row brand-welcome"><img src={brandLogoSrc} alt="Fernández Conde, S.C." /><button className="text-button" onClick={() => setTab("informes")} aria-label={`Abrir informes de ${monthLabel()}`}><CalendarDays /> {monthLabel()}</button></section>
-    <section className="stats-grid"><StatCard label="Ingresos cobrados" value={totals.income} icon={<ArrowUpRight />} trend="Cobros del mes" tone="green" /><StatCard label="Por cobrar" value={totals.pending} icon={<Clock3 />} trend="Saldos de presupuestos del mes" tone="amber" /><StatCard label="Presupuestado" value={totals.quoted} icon={<FileCheck2 />} trend="Propuestas del mes" tone="blue" /><StatCard label="Balance del mes" value={totals.income - totals.expenses} icon={<TrendingUp />} trend="Después de gastos" tone="navy" /></section>
+    <section className="stats-grid"><StatCard label="Ingresos cobrados" value={totals.income} icon={<ArrowUpRight />} trend="Cobros del mes" tone="green" /><StatCard label="Por cobrar" value={totals.pending} icon={<Clock3 />} trend="Saldo pendiente acumulado" tone="amber" /><StatCard label="Presupuestado" value={totals.quoted} icon={<FileCheck2 />} trend="Propuestas del mes" tone="blue" /><StatCard label="Balance del mes" value={totals.income - totals.expenses} icon={<TrendingUp />} trend="Después de gastos" tone="navy" /></section>
     <section className="main-grid"><article className="panel activity-panel"><div className="panel-heading"><div><p className="eyebrow">ACTIVIDAD</p><h3>Presupuestos recientes</h3></div><button className="text-link" onClick={() => setTab("documentos")}>Ver todos <ChevronRight /></button></div><div className="document-list">{documents.slice(0, 4).map((doc) => <DocumentRow key={doc.id} doc={doc} onClick={() => openDocument(doc)} />)}{documents.length === 0 && <EmptyState title="Aún no hay presupuestos" text="Crea tu primer presupuesto." />}</div></article>
       <article className="panel quick-panel"><p className="eyebrow">ACCESOS RÁPIDOS</p><h3>Gestión de la firma</h3><button className="quick-action" onClick={openComposer}><span className="quick-icon blue"><FilePlus2 /></span><span><strong>Nuevo presupuesto</strong><small>Incluye pagos por actos procesales</small></span><ChevronRight /></button><button className="quick-action" onClick={() => setTab("movimientos")}><span className="quick-icon gold"><WalletCards /></span><span><strong>Registrar gasto</strong><small>Controla los egresos de Oscar, Dan o el Fondo</small></span><ChevronRight /></button><button className="quick-action" onClick={() => setTab("informes")}><span className="quick-icon green"><BarChart3 /></span><span><strong>Consultar informes</strong><small>Revisa resultados mensuales y anuales</small></span><ChevronRight /></button></article>
     </section>
@@ -542,7 +543,7 @@ function Dashboard({ totals, documents, movements, setTab, openDocument, openCom
 
 function Receivables({ documents, movements, openDocument }: { documents: Document[]; movements: Movement[]; openDocument: (doc: Document) => void }) {
   const [now] = useState(() => Date.now());
-  const rows = documents.filter((document) => document.balance > 0 && document.status !== "Rechazado").sort((a, b) => new Date(a.issuedAt).getTime() - new Date(b.issuedAt).getTime()).map((document) => {
+  const rows = documents.filter(isActiveReceivable).sort((a, b) => new Date(a.issuedAt).getTime() - new Date(b.issuedAt).getTime()).map((document) => {
     const payments = movements.filter((movement) => movement.type === "Ingreso" && movement.documentId === document.id);
     const lastPayment = payments.reduce<string | null>((latest, payment) => !latest || new Date(payment.occurredAt) > new Date(latest) ? payment.occurredAt : latest, null);
     const reference = lastPayment ?? document.issuedAt;
